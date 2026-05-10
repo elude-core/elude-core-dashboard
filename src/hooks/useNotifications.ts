@@ -7,7 +7,7 @@ import type { Notification } from "@/lib/notifications";
 
 export function useNotifications() {
   return useSWR<FetchResult<Notification[]>>("/api/notifications", fetcher, {
-    refreshInterval: 30_000,
+    refreshInterval: 10_000,
     revalidateOnFocus: true,
     dedupingInterval: 5_000,
   });

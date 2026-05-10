@@ -128,7 +128,7 @@ export default function NotificationsPage() {
       </div>
 
       <p className="text-xs text-gray-400">
-        Les 20 derniers events. Polling auto toutes les 30s. Source : n8n executions du workflow{" "}
+        Les 20 derniers events. Refresh client 10s + cache 5s = fraîcheur ~15s max. Source : n8n executions du workflow{" "}
         <code className="rounded bg-gray-100 px-1 py-0.5 text-xs dark:bg-gray-800">[Alert] Kuma service down → Telegram</code>.
       </p>
     </div>

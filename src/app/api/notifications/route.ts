@@ -4,9 +4,15 @@ import { getNotifications } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
+// TTL court (5s) : la page /notifications est consultée pendant un incident,
+// la fraîcheur prime sur l'économie de hits n8n DB.
 export async function GET() {
   try {
-    const result = await fetchWithFallback("notifications:list", () => getNotifications(20));
+    const result = await fetchWithFallback(
+      "notifications:list",
+      () => getNotifications(20),
+      5,
+    );
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json(
