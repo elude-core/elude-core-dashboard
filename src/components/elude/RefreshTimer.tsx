@@ -1,33 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useStatus } from "@/hooks/useStatus";
+import { useStatus, useLastStatusFetchAt } from "@/hooks/useStatus";
 import { Clock } from "lucide-react";
 
 const POLL_INTERVAL_SECONDS = 30;
 
 export function RefreshTimer() {
-  const { data, isLoading } = useStatus();
-  const [lastUpdate, setLastUpdate] = useState<number | null>(null);
-  const [now, setNow] = useState(0);
+  const { isLoading } = useStatus();
+  const lastFetchAt = useLastStatusFetchAt();
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (data) setLastUpdate(Date.now());
-  }, [data]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setNow(Date.now());
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (isLoading || !lastUpdate) return null;
-
-  const elapsedSec = Math.floor((now - lastUpdate) / 1000);
+  if (isLoading || lastFetchAt === 0) return null;
+  // eslint-disable-next-line react-hooks/purity
+  const elapsedSec = Math.floor((Date.now() - lastFetchAt) / 1000);
   const nextRefreshIn = Math.max(0, POLL_INTERVAL_SECONDS - elapsedSec);
-  const lastUpdateStr = new Date(lastUpdate).toLocaleTimeString("fr-FR", {
+  const lastUpdateStr = new Date(lastFetchAt).toLocaleTimeString("fr-FR", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
