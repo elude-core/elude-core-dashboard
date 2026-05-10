@@ -26,6 +26,7 @@
     "@tailwindcss/postcss": "^4.1.17",
     "apexcharts": "^4.7.0",
     "autoprefixer": "^10.4.22",
+    "clsx": "^2.1.1",
     "flatpickr": "^4.6.13",
     "ioredis": "^5.10.1",
     "lucide-react": "^1.14.0",

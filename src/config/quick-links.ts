@@ -8,7 +8,7 @@ export interface QuickLink {
 
 export const QUICK_LINKS: QuickLink[] = [
   { id: 'coolify', name: 'Coolify', url: 'https://coolify.elude.fr', iconName: 'Server', description: 'Orchestrator' },
-  { id: 'medusa', name: 'Medusa Admin', url: 'https://medusa.elude.fr/admin', iconName: 'ShoppingCart', description: 'Commerce' },
+  { id: 'medusa', name: 'Medusa Admin', url: 'https://medusa.elude.fr/app', iconName: 'ShoppingCart', description: 'Commerce' },
   { id: 'payload', name: 'Payload CMS', url: 'https://payload.elude.fr/admin', iconName: 'FileText', description: 'CMS' },
   { id: 'n8n', name: 'n8n', url: 'https://n8n.elude.fr', iconName: 'Workflow', description: 'Automation' },
   { id: 'kuma', name: 'Uptime Kuma', url: 'https://kuma.elude.fr', iconName: 'Activity', description: 'Monitoring' },

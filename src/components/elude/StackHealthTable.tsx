@@ -30,7 +30,7 @@ function IconByName({ name }: { name: string }) {
 export function StackHealthTable({ services }: StackHealthTableProps) {
   // Match Kuma monitors avec metadata config (par nom)
   const rows = services.map((monitor) => {
-    const meta = SERVICES.find((s) => monitor.name.toLowerCase().includes(s.id))
+    const meta = SERVICES.find((s) => s.kumaName === monitor.name)
     return { monitor, meta }
   })
 

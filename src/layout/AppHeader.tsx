@@ -1,11 +1,12 @@
 "use client";
-import { ThemeToggleButton } from "@/components/common/ThemeToggleButton";
+import { AnimatedThemeToggler } from "@/components/elude/AnimatedThemeToggler";
 import { useSidebar } from "@/context/SidebarContext";
 import React, { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useSWRConfig } from "swr";
 import { useStatus } from "@/hooks/useStatus";
 import { StatusBadge } from "@/components/elude/StatusBadge";
+import { RefreshTimer } from "@/components/elude/RefreshTimer";
 
 function HeaderActions() {
   const { mutate } = useSWRConfig();
@@ -120,8 +121,9 @@ const AppHeader: React.FC = () => {
           } items-center justify-between w-full gap-4 px-5 py-4 lg:flex shadow-theme-md lg:justify-end lg:px-0 lg:shadow-none`}
         >
           <div className="flex items-center gap-3">
+            <RefreshTimer />
             <HeaderActions />
-            <ThemeToggleButton />
+            <AnimatedThemeToggler />
           </div>
         </div>
       </div>
