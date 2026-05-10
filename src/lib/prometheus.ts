@@ -9,10 +9,9 @@ export interface PromInstantResponse {
   }
 }
 
-const PROM_URL = process.env.PROMETHEUS_URL!
-if (!PROM_URL) throw new Error('PROMETHEUS_URL env var is not set')
-
 export async function promQuery(promQL: string): Promise<number | null> {
+  const PROM_URL = process.env.PROMETHEUS_URL
+  if (!PROM_URL) throw new Error('PROMETHEUS_URL env var is not set')
   const url = `${PROM_URL}/api/v1/query?query=${encodeURIComponent(promQL)}`
   const res = await fetch(url, { cache: 'no-store' })
   if (!res.ok) throw new Error(`Prometheus query ${res.status}: ${promQL}`)

@@ -28,12 +28,10 @@ export interface AggregateStatus {
   services: KumaMonitor[]
 }
 
-const KUMA_URL = process.env.KUMA_API_URL!
-const KUMA_KEY = process.env.KUMA_API_KEY!
-
-if (!KUMA_URL) throw new Error('KUMA_API_URL env var is not set')
-
 async function kumaFetch(path: string): Promise<unknown> {
+  const KUMA_URL = process.env.KUMA_API_URL
+  const KUMA_KEY = process.env.KUMA_API_KEY
+  if (!KUMA_URL) throw new Error('KUMA_API_URL env var is not set')
   const res = await fetch(`${KUMA_URL}${path}`, {
     headers: KUMA_KEY ? { Authorization: `Bearer ${KUMA_KEY}` } : {},
     cache: 'no-store',
