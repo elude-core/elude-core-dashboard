@@ -1,42 +1,95 @@
-import type { Metadata } from "next";
-import { EcommerceMetrics } from "@/components/ecommerce/EcommerceMetrics";
-import React from "react";
-import MonthlyTarget from "@/components/ecommerce/MonthlyTarget";
-import MonthlySalesChart from "@/components/ecommerce/MonthlySalesChart";
-import StatisticsChart from "@/components/ecommerce/StatisticsChart";
-import RecentOrders from "@/components/ecommerce/RecentOrders";
-import DemographicCard from "@/components/ecommerce/DemographicCard";
+"use client";
 
-export const metadata: Metadata = {
-  title:
-    "Next.js E-commerce Dashboard | TailAdmin - Next.js Dashboard Template",
-  description: "This is Next.js Home for TailAdmin Dashboard Template",
-};
+import { useStatus } from "@/hooks/useStatus";
+import { useKpis } from "@/hooks/useKpis";
+import { DegradedBanner } from "@/components/elude/DegradedBanner";
+import { KpiCard } from "@/components/elude/KpiCard";
+import { KpiCardSkeleton } from "@/components/elude/KpiCardSkeleton";
+import { StackHealthTable } from "@/components/elude/StackHealthTable";
+import { QuickLinksGrid } from "@/components/elude/QuickLinksGrid";
 
-export default function Ecommerce() {
+export default function HomePage() {
+  const { data: statusData, isLoading: statusLoading } = useStatus();
+  const { data: kpisData, isLoading: kpisLoading } = useKpis();
+
+  const status = statusData?.data;
+  const kpis = kpisData?.data;
+
   return (
-    <div className="grid grid-cols-12 gap-4 md:gap-6">
-      <div className="col-span-12 space-y-6 xl:col-span-7">
-        <EcommerceMetrics />
+    <div className="space-y-6">
+      {statusData?.stale && (
+        <DegradedBanner
+          state="stale"
+          upstream={statusData.upstream}
+          staleSinceMs={statusData.staleSince}
+        />
+      )}
+      {kpisData?.stale && (
+        <DegradedBanner
+          state="stale"
+          upstream={kpisData.upstream}
+          staleSinceMs={kpisData.staleSince}
+        />
+      )}
 
-        <MonthlySalesChart />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {kpisLoading ? (
+          <>
+            <KpiCardSkeleton label="Uptime 7j" />
+            <KpiCardSkeleton label="Requests Medusa /h" />
+            <KpiCardSkeleton label="CPU stack" />
+            <KpiCardSkeleton label="RAM stack" />
+          </>
+        ) : (
+          <>
+            <KpiCard
+              label="Uptime 7j"
+              value={kpis?.uptime7d ?? null}
+              format="percent"
+            />
+            <KpiCard
+              label="Requests Medusa /h"
+              value={kpis?.medusaReqRate ?? null}
+              format="rate"
+              unit="req/h"
+            />
+            <KpiCard
+              label="CPU stack"
+              value={kpis?.cpuPct ?? null}
+              format="percent"
+              total={100}
+            />
+            <KpiCard
+              label="RAM stack"
+              value={kpis?.ramUsedGB ?? null}
+              format="gigabytes"
+              unit="GB"
+              total={16}
+            />
+          </>
+        )}
       </div>
 
-      <div className="col-span-12 xl:col-span-5">
-        <MonthlyTarget />
-      </div>
+      {statusLoading ? (
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+          <p className="text-sm text-gray-500">Loading services…</p>
+        </div>
+      ) : (
+        <StackHealthTable services={status?.services ?? []} />
+      )}
 
-      <div className="col-span-12">
-        <StatisticsChart />
-      </div>
+      <QuickLinksGrid />
 
-      <div className="col-span-12 xl:col-span-5">
-        <DemographicCard />
-      </div>
-
-      <div className="col-span-12 xl:col-span-7">
-        <RecentOrders />
-      </div>
+      <footer className="pt-4 text-xs text-gray-400">
+        elude-core-dashboard v{process.env.NEXT_PUBLIC_DASHBOARD_VERSION ?? "0.0.0"}{" "}
+        ·{" "}
+        <a
+          href="https://github.com/elude-core/elude-core-dashboard"
+          className="hover:underline"
+        >
+          GitHub
+        </a>
+      </footer>
     </div>
   );
 }
