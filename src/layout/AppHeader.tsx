@@ -1,5 +1,6 @@
 "use client";
 import { AnimatedThemeToggler } from "@/components/elude/AnimatedThemeToggler";
+import NotificationDropdown from "@/components/header/NotificationDropdown";
 import { useSidebar } from "@/context/SidebarContext";
 import React, { useState } from "react";
 import { RefreshCw } from "lucide-react";
@@ -123,6 +124,7 @@ const AppHeader: React.FC = () => {
           <div className="flex items-center gap-3">
             <RefreshTimer />
             <HeaderActions />
+            <NotificationDropdown />
             <AnimatedThemeToggler />
           </div>
         </div>
