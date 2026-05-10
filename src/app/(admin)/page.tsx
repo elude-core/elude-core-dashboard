@@ -7,6 +7,7 @@ import { KpiCard } from "@/components/elude/KpiCard";
 import { KpiCardSkeleton } from "@/components/elude/KpiCardSkeleton";
 import { StackHealthTable } from "@/components/elude/StackHealthTable";
 import { QuickLinksGrid } from "@/components/elude/QuickLinksGrid";
+import { N8nPanel } from "@/components/elude/N8nPanel";
 
 export default function HomePage() {
   const { data: statusData, isLoading: statusLoading } = useStatus();
@@ -77,6 +78,8 @@ export default function HomePage() {
       ) : (
         <StackHealthTable services={status?.services ?? []} />
       )}
+
+      <N8nPanel />
 
       <QuickLinksGrid />
 
