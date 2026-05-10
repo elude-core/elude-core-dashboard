@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const result = await fetchWithFallback('kuma:status', () => getAggregateStatus())
+    const result = await fetchWithFallback('kuma:status', () => getAggregateStatus(), 5)
     return NextResponse.json(result)
   } catch (err) {
     return NextResponse.json(

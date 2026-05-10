@@ -16,7 +16,7 @@ function notifyStatusFetch() {
 
 export function useStatus() {
   return useSWR<FetchResult<AggregateStatus>>("/api/status", fetcher, {
-    refreshInterval: 30_000,
+    refreshInterval: 10_000,
     revalidateOnFocus: true,
     dedupingInterval: 5_000,
     onSuccess: () => {

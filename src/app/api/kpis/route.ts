@@ -32,7 +32,7 @@ async function getKpis(): Promise<KpiPayload> {
 
 export async function GET() {
   try {
-    const result = await fetchWithFallback('prom:kpis', getKpis)
+    const result = await fetchWithFallback('prom:kpis', getKpis, 5)
     return NextResponse.json(result)
   } catch (err) {
     return NextResponse.json(

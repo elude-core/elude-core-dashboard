@@ -3,7 +3,7 @@
 import { useStatus, useLastStatusFetchAt } from "@/hooks/useStatus";
 import { Clock } from "lucide-react";
 
-const POLL_INTERVAL_SECONDS = 30;
+const POLL_INTERVAL_SECONDS = 10;
 
 export function RefreshTimer() {
   const { isLoading } = useStatus();

@@ -29,7 +29,7 @@ export function DegradedBanner({ state, upstream, staleSinceMs }: DegradedBanner
             Données stale — {upstream} unreachable
             {staleSinceMs !== undefined && ` depuis ${formatDuration(staleSinceMs)}`}
           </p>
-          <p className="text-xs opacity-80">Retry auto dans 30s. Cliquer Refresh pour forcer.</p>
+          <p className="text-xs opacity-80">Retry auto dans 10s. Cliquer Refresh pour forcer.</p>
         </div>
       </div>
     )
