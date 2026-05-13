@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSidebar } from "../context/SidebarContext";
 import { HorizontaLDots } from "../icons/index";
-import { Zap, Server, Link as LinkIcon, Bell, Cloud } from "lucide-react";
+import { Zap, Server, Link as LinkIcon, Bell, Cloud, Activity } from "lucide-react";
 
 type NavItem = {
   name: string;
@@ -28,6 +28,11 @@ const navItems: NavItem[] = [
     icon: <Cloud />,
     name: "Infra",
     path: "/infra",
+  },
+  {
+    icon: <Activity />,
+    name: "Events",
+    path: "/events",
   },
   {
     icon: <Bell />,
