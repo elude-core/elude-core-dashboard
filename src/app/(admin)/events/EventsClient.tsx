@@ -49,7 +49,7 @@ const REFRESH_MS = 30_000;
 const LIMIT = 100;
 
 const SEVERITY_STYLES: Record<EventSeverity, { bg: string; text: string; icon: typeof Info }> = {
-  debug:    { bg: "bg-zinc-100 dark:bg-zinc-800",    text: "text-zinc-500",            icon: Info },
+  debug:    { bg: "bg-zinc-100 dark:bg-zinc-800",    text: "text-zinc-500 dark:text-zinc-400",            icon: Info },
   info:     { bg: "bg-blue-50 dark:bg-blue-900/30",  text: "text-blue-600 dark:text-blue-400", icon: Info },
   warn:     { bg: "bg-amber-50 dark:bg-amber-900/30",text: "text-amber-600 dark:text-amber-400", icon: AlertTriangle },
   error:    { bg: "bg-red-50 dark:bg-red-900/30",    text: "text-red-600 dark:text-red-400",  icon: AlertCircle },
@@ -127,12 +127,12 @@ export default function EventsClient() {
   const warnsCount = stats?.by_severity?.warn ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-zinc-900 dark:text-zinc-100">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Events Timeline</h1>
-          <p className="text-sm text-zinc-500 mt-1">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
             Système elude-core · {total} events au total
           </p>
         </div>
@@ -195,9 +195,9 @@ export default function EventsClient() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Table */}
-        <div className="lg:col-span-2 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700">
+        <div className="lg:col-span-2 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900">
           <table className="w-full text-sm">
-            <thead className="bg-zinc-50 dark:bg-zinc-800 text-left">
+            <thead className="bg-zinc-50 dark:bg-zinc-800 text-left text-zinc-700 dark:text-zinc-200">
               <tr>
                 <th className="px-3 py-2 font-medium w-16">Time</th>
                 <th className="px-3 py-2 font-medium">Event</th>
@@ -208,14 +208,14 @@ export default function EventsClient() {
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
               {loading && !data && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-zinc-500">
+                  <td colSpan={4} className="px-3 py-6 text-center text-zinc-500 dark:text-zinc-400">
                     <Loader2 className="w-5 h-5 animate-spin inline" />
                   </td>
                 </tr>
               )}
               {!loading && data?.events.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-zinc-500">
+                  <td colSpan={4} className="px-3 py-6 text-center text-zinc-500 dark:text-zinc-400">
                     Aucun event pour ce filtre.
                   </td>
                 </tr>
@@ -241,8 +241,8 @@ export default function EventsClient() {
                           <Icon className="w-4 h-4" />
                         </span>
                         <div className="min-w-0 flex-1">
-                          <div className="font-medium truncate">{e.title}</div>
-                          <div className="text-xs text-zinc-500 mt-0.5">
+                          <div className="font-medium truncate text-zinc-900 dark:text-zinc-100">{e.title}</div>
+                          <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
                             <code className="font-mono">{e.type}</code>
                             {e.related_sku && (
                               <span className="ml-2 inline-flex items-center gap-1">
@@ -254,8 +254,8 @@ export default function EventsClient() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-xs text-zinc-500">{e.source}</td>
-                    <td className="px-3 py-2 text-zinc-400">
+                    <td className="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">{e.source}</td>
+                    <td className="px-3 py-2 text-zinc-400 dark:text-zinc-500">
                       <ChevronRight className="w-4 h-4" />
                     </td>
                   </tr>
@@ -266,11 +266,11 @@ export default function EventsClient() {
         </div>
 
         {/* Detail panel */}
-        <div className="rounded-md border border-zinc-200 dark:border-zinc-700 p-4 h-fit sticky top-4">
+        <div className="rounded-md border border-zinc-200 dark:border-zinc-700 p-4 h-fit sticky top-4 bg-white dark:bg-zinc-900">
           {selectedEvent ? (
             <EventDetail event={selectedEvent} />
           ) : (
-            <div className="text-sm text-zinc-500">
+            <div className="text-sm text-zinc-500 dark:text-zinc-400">
               Sélectionne un event pour voir les détails.
             </div>
           )}
@@ -292,12 +292,12 @@ function StatCard({
   color: string;
 }) {
   return (
-    <div className="rounded-md border border-zinc-200 dark:border-zinc-700 p-4">
+    <div className="rounded-md border border-zinc-200 dark:border-zinc-700 p-4 bg-white dark:bg-zinc-900">
       <div className="flex items-center justify-between">
-        <span className="text-xs text-zinc-500 uppercase">{label}</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400 uppercase">{label}</span>
         <Icon className={`w-4 h-4 ${color}`} />
       </div>
-      <div className="text-2xl font-bold mt-1">{value.toLocaleString()}</div>
+      <div className="text-2xl font-bold mt-1 text-zinc-900 dark:text-zinc-100">{value.toLocaleString()}</div>
     </div>
   );
 }
@@ -312,7 +312,7 @@ function EventDetail({ event }: { event: EventRow }) {
           <Icon className="w-5 h-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="font-semibold break-words">{event.title}</div>
+          <div className="font-semibold break-words text-zinc-900 dark:text-zinc-100">{event.title}</div>
           <code className="text-xs text-zinc-500 font-mono">{event.type}</code>
         </div>
       </div>
@@ -363,7 +363,7 @@ function EventDetail({ event }: { event: EventRow }) {
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-xs uppercase text-zinc-500">{label}</div>
+      <div className="text-xs uppercase text-zinc-500 dark:text-zinc-400">{label}</div>
       <div className="break-words">{value}</div>
     </div>
   );
