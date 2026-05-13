@@ -1,29 +1,54 @@
-import { Outfit } from "next/font/google";
+import type { ReactNode } from "react";
+
+import type { Metadata } from "next";
+
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { APP_CONFIG } from "@/config/app-config";
+import { fontVars } from "@/lib/fonts/registry";
+import { PREFERENCE_DEFAULTS } from "@/lib/preferences/preferences-config";
+import { ThemeBootScript } from "@/scripts/theme-boot";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+
 import "./globals.css";
-import "flatpickr/dist/flatpickr.css";
-import { SidebarProvider } from "@/context/SidebarContext";
-import { ThemeProvider } from "@/context/ThemeContext";
 
-const outfit = Outfit({
-  subsets: ["latin"],
-});
+export const metadata: Metadata = {
+  title: APP_CONFIG.meta.title,
+  description: APP_CONFIG.meta.description,
+};
 
-const themeInitScript = `(function(){try{var t=localStorage.getItem("theme");if(t==="dark"||(!t&&true)){document.documentElement.classList.add("dark");}}catch(e){}})();`;
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  const { theme_mode, theme_preset, content_layout, navbar_style, sidebar_variant, sidebar_collapsible, font } =
+    PREFERENCE_DEFAULTS;
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      data-theme-mode={theme_mode}
+      data-theme-preset={theme_preset}
+      data-content-layout={content_layout}
+      data-navbar-style={navbar_style}
+      data-sidebar-variant={sidebar_variant}
+      data-sidebar-collapsible={sidebar_collapsible}
+      data-font={font}
+      suppressHydrationWarning
+    >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        {/* Applies theme and layout preferences on load to avoid flicker and unnecessary server rerenders. */}
+        <ThemeBootScript />
       </head>
-      <body className={`${outfit.className} dark:bg-gray-900`}>
-        <ThemeProvider>
-          <SidebarProvider>{children}</SidebarProvider>
-        </ThemeProvider>
+      <body className={`${fontVars} min-h-screen antialiased`}>
+        <TooltipProvider>
+          <PreferencesStoreProvider
+            themeMode={theme_mode}
+            themePreset={theme_preset}
+            contentLayout={content_layout}
+            navbarStyle={navbar_style}
+            font={font}
+          >
+            {children}
+            <Toaster />
+          </PreferencesStoreProvider>
+        </TooltipProvider>
       </body>
     </html>
   );
