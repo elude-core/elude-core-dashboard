@@ -1,17 +1,15 @@
-import { NextResponse } from 'next/server'
-import { fetchWithFallback } from '@/lib/cache'
-import { getAggregateStatus } from '@/lib/kuma'
+import { NextResponse } from "next/server";
 
-export const dynamic = 'force-dynamic'
+import { fetchWithFallback } from "@/lib/cache";
+import { getAggregateStatus } from "@/lib/kuma";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const result = await fetchWithFallback('kuma:status', () => getAggregateStatus(), 5)
-    return NextResponse.json(result)
+    const result = await fetchWithFallback("kuma:status", () => getAggregateStatus(), 5);
+    return NextResponse.json(result);
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'unknown error' },
-      { status: 503 },
-    )
+    return NextResponse.json({ error: err instanceof Error ? err.message : "unknown error" }, { status: 503 });
   }
 }

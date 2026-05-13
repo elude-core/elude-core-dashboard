@@ -1,7 +1,8 @@
 "use client";
 
+import { Activity, CheckCircle2, ExternalLink, Workflow, XCircle } from "lucide-react";
+
 import { useN8nStats } from "@/hooks/useN8nStats";
-import { Workflow, CheckCircle2, XCircle, Activity, ExternalLink } from "lucide-react";
 
 function formatRelative(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -26,8 +27,8 @@ export function N8nPanel() {
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-800">
-        <h3 className="flex items-center gap-2 text-base font-semibold text-gray-900 dark:text-gray-100">
+      <div className="flex items-center justify-between border-gray-200 border-b px-5 py-4 dark:border-gray-800">
+        <h3 className="flex items-center gap-2 font-semibold text-base text-gray-900 dark:text-gray-100">
           <Workflow className="h-5 w-5 text-blue-500" />
           n8n Automation
         </h3>
@@ -35,37 +36,39 @@ export function N8nPanel() {
           href="https://n8n.elude.fr"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
+          className="inline-flex items-center gap-1 text-blue-600 text-xs hover:underline dark:text-blue-400"
         >
           Open n8n <ExternalLink className="h-3 w-3" />
         </a>
       </div>
 
       {isLoading || !stats ? (
-        <div className="px-5 py-6 text-sm text-gray-500">Loading…</div>
+        <div className="px-5 py-6 text-gray-500 text-sm">Loading…</div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 border-b border-gray-100 p-5 sm:grid-cols-4 dark:border-gray-800">
+          <div className="grid grid-cols-2 gap-3 border-gray-100 border-b p-5 sm:grid-cols-4 dark:border-gray-800">
             <div>
-              <p className="text-xs text-gray-500">Active</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+              <p className="text-gray-500 text-xs">Active</p>
+              <p className="font-bold text-2xl text-gray-900 dark:text-gray-100">
                 {stats.activeWorkflows}
-                <span className="ml-1 text-sm font-normal text-gray-400">/ {stats.totalWorkflows}</span>
+                <span className="ml-1 font-normal text-gray-400 text-sm">/ {stats.totalWorkflows}</span>
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Runs 24h</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.executions24h}</p>
+              <p className="text-gray-500 text-xs">Runs 24h</p>
+              <p className="font-bold text-2xl text-gray-900 dark:text-gray-100">{stats.executions24h}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Errors 24h</p>
-              <p className={`text-2xl font-bold ${stats.errors24h > 0 ? "text-red-600 dark:text-red-400" : "text-gray-900 dark:text-gray-100"}`}>
+              <p className="text-gray-500 text-xs">Errors 24h</p>
+              <p
+                className={`font-bold text-2xl ${stats.errors24h > 0 ? "text-red-600 dark:text-red-400" : "text-gray-900 dark:text-gray-100"}`}
+              >
                 {stats.errors24h}
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Last run</p>
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+              <p className="text-gray-500 text-xs">Last run</p>
+              <p className="font-medium text-gray-900 text-sm dark:text-gray-100">
                 {stats.lastExecution ? (
                   <span className="flex items-center gap-1.5">
                     <StatusIcon status={stats.lastExecution.status} />
@@ -80,7 +83,7 @@ export function N8nPanel() {
 
           {stats.recentRuns.length > 0 && (
             <div>
-              <p className="px-5 pt-4 text-xs uppercase tracking-wider text-gray-500">Recent runs</p>
+              <p className="px-5 pt-4 text-gray-500 text-xs uppercase tracking-wider">Recent runs</p>
               <ul className="divide-y divide-gray-100 dark:divide-gray-800">
                 {stats.recentRuns.slice(0, 5).map((run) => (
                   <li key={run.id} className="flex items-center justify-between px-5 py-2.5 text-sm">
@@ -88,7 +91,7 @@ export function N8nPanel() {
                       <StatusIcon status={run.status} />
                       <span className="font-medium text-gray-900 dark:text-gray-100">{run.workflowName}</span>
                     </div>
-                    <span className="text-xs text-gray-500">{formatRelative(run.startedAt)}</span>
+                    <span className="text-gray-500 text-xs">{formatRelative(run.startedAt)}</span>
                   </li>
                 ))}
               </ul>

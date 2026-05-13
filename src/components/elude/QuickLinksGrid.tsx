@@ -1,16 +1,17 @@
-import * as Icons from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
-import { QUICK_LINKS } from '@/config/quick-links'
+import type { LucideIcon } from "lucide-react";
+import * as Icons from "lucide-react";
+
+import { QUICK_LINKS } from "@/config/quick-links";
 
 function IconLarge({ name }: { name: string }) {
-  const Icon = (Icons as unknown as Record<string, LucideIcon>)[name] ?? Icons.Link
-  return <Icon className="h-8 w-8 text-blue-500" />
+  const Icon = (Icons as unknown as Record<string, LucideIcon>)[name] ?? Icons.Link;
+  return <Icon className="h-8 w-8 text-blue-500" />;
 }
 
 export function QuickLinksGrid() {
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-      <h3 className="mb-4 text-base font-semibold text-gray-900 dark:text-gray-100">Quick Links</h3>
+      <h3 className="mb-4 font-semibold text-base text-gray-900 dark:text-gray-100">Quick Links</h3>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {QUICK_LINKS.map((link) => (
           <a
@@ -22,14 +23,12 @@ export function QuickLinksGrid() {
           >
             <IconLarge name={link.iconName} />
             <div>
-              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{link.name}</p>
-              {link.description && (
-                <p className="text-xs text-gray-500 dark:text-gray-400">{link.description}</p>
-              )}
+              <p className="font-semibold text-gray-900 text-sm dark:text-gray-100">{link.name}</p>
+              {link.description && <p className="text-gray-500 text-xs dark:text-gray-400">{link.description}</p>}
             </div>
           </a>
         ))}
       </div>
     </div>
-  )
+  );
 }

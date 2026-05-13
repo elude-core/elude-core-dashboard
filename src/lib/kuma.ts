@@ -77,7 +77,7 @@ export async function getAggregateStatus(slug = "elude-core"): Promise<Aggregate
       return {
         id: m.id,
         name: m.name,
-        status: last ? STATUS_MAP[last.status] ?? "pending" : "pending",
+        status: last ? (STATUS_MAP[last.status] ?? "pending") : "pending",
         uptime24h: hb.uptimeList[`${m.id}_24`],
         uptime30d: hb.uptimeList[`${m.id}_720`],
         ping: last?.ping,

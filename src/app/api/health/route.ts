@@ -1,42 +1,43 @@
-import { NextResponse } from 'next/server'
-import { redis } from '@/lib/redis'
+import { NextResponse } from "next/server";
 
-export const dynamic = 'force-dynamic'
+import { redis } from "@/lib/redis";
 
-const startedAt = Date.now()
+export const dynamic = "force-dynamic";
 
-async function checkRedis(): Promise<'ok' | 'down'> {
+const startedAt = Date.now();
+
+async function checkRedis(): Promise<"ok" | "down"> {
   try {
-    const pong = await redis.ping()
-    return pong === 'PONG' ? 'ok' : 'down'
+    const pong = await redis.ping();
+    return pong === "PONG" ? "ok" : "down";
   } catch {
-    return 'down'
+    return "down";
   }
 }
 
-async function checkUpstream(url: string | undefined): Promise<'ok' | 'down'> {
-  if (!url) return 'down'
+async function checkUpstream(url: string | undefined): Promise<"ok" | "down"> {
+  if (!url) return "down";
   try {
     const res = await Promise.race([
-      fetch(`${url}/api/v1/query?query=up`, { cache: 'no-store' }).catch(() => null),
+      fetch(`${url}/api/v1/query?query=up`, { cache: "no-store" }).catch(() => null),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
-    ])
-    return res && (res as Response).ok ? 'ok' : 'down'
+    ]);
+    return res && (res as Response).ok ? "ok" : "down";
   } catch {
-    return 'down'
+    return "down";
   }
 }
 
-async function checkKuma(url: string | undefined): Promise<'ok' | 'down'> {
-  if (!url) return 'down'
+async function checkKuma(url: string | undefined): Promise<"ok" | "down"> {
+  if (!url) return "down";
   try {
     const res = await Promise.race([
-      fetch(`${url}/api/status-page/elude-core`, { cache: 'no-store' }).catch(() => null),
+      fetch(`${url}/api/status-page/elude-core`, { cache: "no-store" }).catch(() => null),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
-    ])
-    return res && (res as Response).ok ? 'ok' : 'down'
+    ]);
+    return res && (res as Response).ok ? "ok" : "down";
   } catch {
-    return 'down'
+    return "down";
   }
 }
 
@@ -45,24 +46,24 @@ export async function GET() {
     checkRedis(),
     checkKuma(process.env.KUMA_API_URL),
     checkUpstream(process.env.PROMETHEUS_URL),
-  ])
+  ]);
 
-  const allUpstreamsDown = kumaStatus === 'down' && promStatus === 'down'
-  let overall: 'ok' | 'degraded' | 'down' = 'ok'
+  const allUpstreamsDown = kumaStatus === "down" && promStatus === "down";
+  let overall: "ok" | "degraded" | "down" = "ok";
 
-  if (redisStatus === 'down' || allUpstreamsDown) {
-    overall = 'down'
-  } else if (kumaStatus === 'down' || promStatus === 'down') {
-    overall = 'degraded'
+  if (redisStatus === "down" || allUpstreamsDown) {
+    overall = "down";
+  } else if (kumaStatus === "down" || promStatus === "down") {
+    overall = "degraded";
   }
 
   return NextResponse.json(
     {
       status: overall,
       checks: { redis: redisStatus, kuma: kumaStatus, prometheus: promStatus },
-      version: process.env.NEXT_PUBLIC_DASHBOARD_VERSION ?? 'unknown',
+      version: process.env.NEXT_PUBLIC_DASHBOARD_VERSION ?? "unknown",
       uptime: Math.floor((Date.now() - startedAt) / 1000),
     },
     { status: 200 },
-  )
+  );
 }

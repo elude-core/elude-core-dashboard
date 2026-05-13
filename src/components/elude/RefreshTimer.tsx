@@ -1,7 +1,8 @@
 "use client";
 
-import { useStatus, useLastStatusFetchAt } from "@/hooks/useStatus";
 import { Clock } from "lucide-react";
+
+import { useLastStatusFetchAt, useStatus } from "@/hooks/useStatus";
 
 const POLL_INTERVAL_SECONDS = 10;
 
@@ -20,7 +21,7 @@ export function RefreshTimer() {
   });
 
   return (
-    <div className="hidden items-center gap-2 text-xs text-gray-500 dark:text-gray-400 lg:flex">
+    <div className="hidden items-center gap-2 text-gray-500 text-xs lg:flex dark:text-gray-400">
       <Clock className="h-3.5 w-3.5" />
       <span className="tabular-nums">
         Updated <span className="font-medium text-gray-700 dark:text-gray-300">{lastUpdateStr}</span>

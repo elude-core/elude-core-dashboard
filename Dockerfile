@@ -3,13 +3,13 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --ignore-scripts
 
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ARG NEXT_PUBLIC_DASHBOARD_VERSION=0.1.0
+ARG NEXT_PUBLIC_DASHBOARD_VERSION=0.2.0-dev
 ENV NEXT_PUBLIC_DASHBOARD_VERSION=$NEXT_PUBLIC_DASHBOARD_VERSION
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
@@ -33,6 +33,6 @@ USER nextjs
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:3000/api/health | grep -q "\"status\":\"ok\"" || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/api/health | grep -q '"status":"ok"' || exit 1
 
 CMD ["node", "server.js"]

@@ -36,8 +36,7 @@ function parseNotification(exec: N8nExecution): Notification | null {
 
   const statusStr = statusMatch[2];
   const service = statusMatch[3].trim();
-  const status: NotificationStatus =
-    statusStr === "DOWN" ? "down" : statusStr === "UP" ? "up" : "test";
+  const status: NotificationStatus = statusStr === "DOWN" ? "down" : statusStr === "UP" ? "up" : "test";
 
   const msgMatch = text.match(/💬\s*(.+?)(?:\n|$)/);
   const message = msgMatch ? msgMatch[1].trim() : "";
@@ -55,7 +54,5 @@ export async function getNotifications(limit = 20): Promise<Notification[]> {
   );
   if (!res.ok) throw new Error(`n8n executions API ${res.status}`);
   const data = (await res.json()) as { data: N8nExecution[] };
-  return data.data
-    .map(parseNotification)
-    .filter((n): n is Notification => n !== null);
+  return data.data.map(parseNotification).filter((n): n is Notification => n !== null);
 }
