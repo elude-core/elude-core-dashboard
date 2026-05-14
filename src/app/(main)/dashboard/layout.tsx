@@ -1,6 +1,12 @@
 import type { ReactNode } from "react";
 
+import { siGithub } from "simple-icons";
+
+import { SimpleIcon } from "@/components/simple-icon";
+import { Button } from "@/components/ui/button";
+
 import { cookies } from "next/headers";
+import Link from "next/link";
 
 import { AppSidebar } from "@/app/(main)/dashboard/_components/sidebar/app-sidebar";
 import { RefreshTimer } from "@/components/elude/RefreshTimer";
@@ -66,6 +72,16 @@ export default async function Layout({ children }: Readonly<{ children: ReactNod
             <div className="flex items-center gap-2">
               <LayoutControls />
               <ThemeSwitcher />
+              <Button asChild size="icon" variant="outline" aria-label="Open GitHub repository">
+                <Link
+                  prefetch={false}
+                  href="https://github.com/elude-core/elude-core-dashboard"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <SimpleIcon icon={siGithub} className="fill-foreground" />
+                </Link>
+              </Button>
               <NotificationDropdown />
               <AccountSwitcher users={users} />
             </div>
