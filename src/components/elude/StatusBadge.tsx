@@ -50,7 +50,7 @@ export function StatusBadge({ status, upCount, totalCount }: StatusBadgeProps) {
   }
 
   return (
-    <Link href="/stack-health" className={`${wrapperBase} ${cls}`} aria-label="Voir Stack Health">
+    <Link href="/dashboard/stack-health" className={`${wrapperBase} ${cls}`} aria-label="Voir Stack Health">
       {content}
     </Link>
   );
