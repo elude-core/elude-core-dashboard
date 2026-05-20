@@ -1,4 +1,13 @@
-import { Activity, Bell, CalendarClock, LayoutDashboard, LinkIcon, type LucideIcon, Server } from "lucide-react";
+import {
+  Activity,
+  Bell,
+  CalendarClock,
+  GitBranch,
+  LayoutDashboard,
+  LinkIcon,
+  type LucideIcon,
+  Server,
+} from "lucide-react";
 
 export interface NavSubItem {
   title: string;
@@ -32,6 +41,7 @@ export const sidebarItems: NavGroup[] = [
     items: [
       { title: "Vue d'ensemble", url: "/dashboard", icon: LayoutDashboard },
       { title: "Stack health", url: "/dashboard/stack-health", icon: Activity },
+      { title: "Sync pipeline", url: "/dashboard/sync-pipeline", icon: GitBranch },
       { title: "Events", url: "/dashboard/events", icon: CalendarClock },
       { title: "Notifications", url: "/dashboard/notifications", icon: Bell },
     ],
