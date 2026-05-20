@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { CheckCircle2, GitBranch, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { CheckCircle2, GitBranch, Loader2, PlayCircle, RefreshCw, XCircle } from "lucide-react";
 
 const HEALTH_URL = process.env.NEXT_PUBLIC_SYNC_HEALTH_URL || "https://sync.elude.fr/health/pipeline";
 
@@ -229,6 +229,160 @@ export default function SyncPipelineClient() {
             ))}
           </div>
         </>
+      )}
+
+      <SmokeTestSection />
+    </div>
+  );
+}
+
+type SmokeTestStep = {
+  ok: boolean;
+  duration_ms: number;
+  details?: Record<string, unknown>;
+  error?: string;
+};
+
+type SmokeTestResult = {
+  ok: boolean;
+  sku: string;
+  total_duration_ms: number;
+  ts: string;
+  steps: {
+    enqueue_sync: SmokeTestStep;
+    medusa_synced: SmokeTestStep;
+    meili_indexed: SmokeTestStep;
+    payload_present: SmokeTestStep;
+    storefront_308: SmokeTestStep;
+    storefront_200: SmokeTestStep;
+  };
+};
+
+const SMOKE_STEP_LABELS: Record<keyof SmokeTestResult["steps"], string> = {
+  enqueue_sync: "1. Enqueue resync (Akeneo → elude-sync queue)",
+  medusa_synced: "2. Medusa product mis à jour",
+  meili_indexed: "3. Meili doc indexé",
+  payload_present: "4. Payload product présent",
+  storefront_308: "5. Storefront /<handle> → 308",
+  storefront_200: "6. Storefront /p/<sku>-<handle> → 200",
+};
+
+function SmokeTestSection() {
+  const [sku, setSku] = useState("R898");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<SmokeTestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runSmoke = useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/smoke-test?sku=${encodeURIComponent(sku)}`, {
+        method: "POST",
+      });
+      const body = (await res.json()) as SmokeTestResult | { ok: false; error: string };
+      if ("steps" in body) {
+        setResult(body);
+      } else {
+        setError(body.error ?? "Unknown error");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+    }
+  }, [sku]);
+
+  return (
+    <div className="space-y-4 rounded-lg border bg-card p-4">
+      <div>
+        <h2 className="flex items-center gap-2 font-semibold text-lg">
+          <PlayCircle className="h-5 w-5" aria-hidden />
+          Smoke test
+        </h2>
+        <p className="mt-1 text-muted-foreground text-sm">
+          Force un resync d'un SKU et asserte chaque étage du pipeline. Bouclier de contrôle "happy path" — utile après
+          un changement d'archi ou pour debug.
+        </p>
+      </div>
+
+      <div className="flex items-end gap-3">
+        <div className="flex-1">
+          <label htmlFor="smoke-sku" className="mb-1 block font-medium text-muted-foreground text-xs">
+            SKU à tester
+          </label>
+          <input
+            id="smoke-sku"
+            type="text"
+            value={sku}
+            onChange={(e) => setSku(e.target.value.toUpperCase().trim())}
+            disabled={running}
+            className="w-full max-w-xs rounded-md border bg-background px-3 py-1.5 font-mono text-sm disabled:opacity-50"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={runSmoke}
+          disabled={running || !sku}
+          className="inline-flex items-center gap-2 rounded-md border bg-primary px-4 py-1.5 font-medium text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50"
+        >
+          {running ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <PlayCircle className="h-4 w-4" aria-hidden />
+          )}
+          {running ? "Running…" : "Run smoke test"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-700 text-sm dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+          <p className="font-semibold">Smoke test failed</p>
+          <p className="mt-1 font-mono">{error}</p>
+        </div>
+      )}
+
+      {result && (
+        <div className="space-y-3">
+          <div
+            className={`rounded-md border p-3 ${
+              result.ok
+                ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40"
+                : "border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/40"
+            }`}
+          >
+            <p className="flex items-center gap-2 font-semibold">
+              <StatusIcon ok={result.ok} />
+              SKU {result.sku} : {result.ok ? "ALL GREEN" : "FAILED"} ({result.total_duration_ms}ms)
+            </p>
+          </div>
+
+          <ul className="space-y-2">
+            {(Object.keys(SMOKE_STEP_LABELS) as Array<keyof SmokeTestResult["steps"]>).map((key) => {
+              const step = result.steps[key];
+              return (
+                <li key={key} className="flex items-start gap-3 rounded-md border bg-background p-3">
+                  <StatusIcon ok={step.ok} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="font-medium text-sm">{SMOKE_STEP_LABELS[key]}</span>
+                      <span className="text-muted-foreground text-xs tabular-nums">{step.duration_ms}ms</span>
+                    </div>
+                    {step.error && (
+                      <p className="mt-1 break-all font-mono text-red-700 text-xs dark:text-red-300">{step.error}</p>
+                    )}
+                    {step.details && (
+                      <pre className="mt-1 whitespace-pre-wrap break-all text-muted-foreground text-xs">
+                        {JSON.stringify(step.details, null, 0)}
+                      </pre>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </div>
   );
