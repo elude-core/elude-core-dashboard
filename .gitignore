@@ -35,3 +35,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# npm parasite — le build (nixpacks/CI) est en pnpm, seul pnpm-lock.yaml fait foi
+package-lock.json
