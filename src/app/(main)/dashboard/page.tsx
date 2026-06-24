@@ -5,7 +5,6 @@ import { KpiCard } from "@/components/elude/KpiCard";
 import { KpiCardSkeleton } from "@/components/elude/KpiCardSkeleton";
 import { N8nPanel } from "@/components/elude/N8nPanel";
 import { QuickLinksGrid } from "@/components/elude/QuickLinksGrid";
-import { SentryPanel } from "@/components/elude/SentryPanel";
 import { StackHealthTable } from "@/components/elude/StackHealthTable";
 import { useKpis } from "@/hooks/useKpis";
 import { useStatus } from "@/hooks/useStatus";
@@ -53,8 +52,6 @@ export default function HomePage() {
       )}
 
       <N8nPanel />
-
-      <SentryPanel />
 
       <QuickLinksGrid />
 

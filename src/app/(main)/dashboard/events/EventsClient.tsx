@@ -52,6 +52,7 @@ const PILLS: Pill[] = [
   { id: "akeneo", label: "Akeneo", filter: { source: "akeneo" } },
   { id: "elude-sync", label: "Sync", filter: { source: "elude-sync" } },
   { id: "medusa", label: "Medusa", filter: { source: "medusa" } },
+  { id: "sentry", label: "Sentry", filter: { source: "sentry" } },
   { id: "backup", label: "Backups", filter: { tag: "backup" } },
   { id: "product", label: "Produits", filter: { tag: "product" } },
   { id: "order", label: "Commandes", filter: { tag: "order" } },
