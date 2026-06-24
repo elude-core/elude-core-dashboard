@@ -33,7 +33,7 @@ export const QUICK_LINKS: QuickLink[] = [
   },
   { id: "grafana", name: "Grafana", url: "https://grafana.elude.fr", iconName: "LineChart", description: "Metrics" },
   { id: "mailpit", name: "Mailpit", url: "https://mailpit.elude.fr", iconName: "Mail", description: "Email dev" },
-  { id: "sentry", name: "Sentry", url: "https://elude-core.sentry.io", iconName: "Bug", description: "Errors" },
+  { id: "sentry", name: "Sentry", url: "https://elude.sentry.io/insights/projects/storefront/", iconName: "Bug", description: "Errors" },
   {
     id: "vercel",
     name: "Vercel team",
