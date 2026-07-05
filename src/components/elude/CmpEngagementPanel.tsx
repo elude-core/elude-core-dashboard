@@ -70,7 +70,7 @@ export function CmpEngagementPanel() {
       acc.ignored += d.ignored;
     }
     const choices = acc.accept + acc.deny + acc.custom;
-    acc.interaction_rate = acc.display > 0 ? Math.round((choices / acc.display) * 100) : 0;
+    acc.interaction_rate = acc.display > 0 ? Math.min(100, Math.round((choices / acc.display) * 100)) : 0;
     acc.accept_rate = choices > 0 ? Math.round((acc.accept / choices) * 100) : 0;
     return acc;
   }
