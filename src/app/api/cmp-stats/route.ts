@@ -71,7 +71,8 @@ async function getCmpStats(): Promise<CmpStatsPayload> {
     }
   }
   const choices = totals.accept + totals.deny + totals.custom;
-  totals.interaction_rate = totals.display > 0 ? Math.round((choices / totals.display) * 100) : 0;
+  // cap 100 % (choices > display possible via dérive de bucket jour)
+  totals.interaction_rate = totals.display > 0 ? Math.min(100, Math.round((choices / totals.display) * 100)) : 0;
   totals.accept_rate = choices > 0 ? Math.round((totals.accept / choices) * 100) : 0;
 
   return { brands: raw.brands ?? [], days: raw.days ?? {}, totals };
