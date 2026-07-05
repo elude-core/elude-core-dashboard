@@ -1,5 +1,6 @@
 "use client";
 
+import { CmpEngagementPanel } from "@/components/elude/CmpEngagementPanel";
 import { DegradedBanner } from "@/components/elude/DegradedBanner";
 import { KpiCard } from "@/components/elude/KpiCard";
 import { KpiCardSkeleton } from "@/components/elude/KpiCardSkeleton";
@@ -52,6 +53,8 @@ export default function HomePage() {
       )}
 
       <N8nPanel />
+
+      <CmpEngagementPanel />
 
       <QuickLinksGrid />
 
