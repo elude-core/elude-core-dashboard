@@ -39,11 +39,15 @@ function emptyTotals(): CmpDayBrand {
 }
 
 async function getCmpStats(): Promise<CmpStatsPayload> {
-  const base = process.env.SYNC_URL;
+  // Le beacon POST TOUJOURS vers la prod (sync.elude.fr/cmp-hit), même depuis
+  // le storefront dev (qui suffixe `-dev`). Toute la donnée CMP vit donc dans
+  // elude-sync PROD → var dédiée CMP_STATS_URL, pas le SYNC_URL par-env (qui
+  // pointe le sync dev en dev, sans données et non résolvable ici).
+  const base = process.env.CMP_STATS_URL ?? process.env.SYNC_URL;
   const user = process.env.SYNC_CMP_USER;
   const pass = process.env.SYNC_CMP_PASSWORD;
   if (!base || !user || !pass) {
-    throw new Error("SYNC_URL / SYNC_CMP_USER / SYNC_CMP_PASSWORD not configured");
+    throw new Error("CMP_STATS_URL / SYNC_CMP_USER / SYNC_CMP_PASSWORD not configured");
   }
   const auth = Buffer.from(`${user}:${pass}`).toString("base64");
   const res = await fetch(`${base}/admin/cmp-stats?days=${DAYS}`, {
