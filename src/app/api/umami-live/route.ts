@@ -112,9 +112,17 @@ async function umamiGet<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** /stats a changé de forme selon les versions d'Umami : nombres à PLAT
+ *  (`{"pageviews":9}`, vérifié sur notre instance 09/07) vs enveloppés
+ *  (`{"pageviews":{"value":9}}`, anciennes v2). On accepte les deux. */
 interface StatsResponse {
-  pageviews?: { value?: number };
-  visitors?: { value?: number };
+  pageviews?: number | { value?: number };
+  visitors?: number | { value?: number };
+}
+
+function statNum(v: number | { value?: number } | undefined): number {
+  if (typeof v === "number") return v;
+  return v?.value ?? 0;
 }
 
 interface RealtimeResponse {
@@ -187,8 +195,8 @@ async function buildPayload(): Promise<TvLivePayload> {
     totalActive += active;
     views30m += realtime.totals?.views ?? 0;
     visitors30m += realtime.totals?.visitors ?? 0;
-    const tvToday = today.pageviews?.value ?? 0;
-    const tvVisitors = today.visitors?.value ?? 0;
+    const tvToday = statNum(today.pageviews);
+    const tvVisitors = statNum(today.visitors);
     viewsToday += tvToday;
     visitorsToday += tvVisitors;
 
