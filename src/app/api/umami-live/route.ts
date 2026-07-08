@@ -68,6 +68,9 @@ export interface TvLivePayload {
   visitorsToday: number;
   /** ISO2 → visiteurs (30 min, tous sites). */
   countries: Record<string, number>;
+  /** ISO2 → sessions ACTIVES (events ≤ 5 min) — aligne les dots brillants de
+   *  la map sur la fenêtre « en ligne » ; le 30 min = trace estompée. */
+  countriesActive: Record<string, number>;
   sites: TvSite[];
   /** Dernières pages vues tous sites confondus (desc). */
   feed: TvEvent[];
@@ -119,6 +122,7 @@ interface RealtimeResponse {
   events?: Array<{
     __type?: string;
     createdAt?: string;
+    sessionId?: string;
     country?: string | null;
     browser?: string | null;
     device?: string | null;
@@ -167,6 +171,9 @@ async function buildPayload(): Promise<TvLivePayload> {
   );
 
   const countries: Record<string, number> = {};
+  // sessions uniques par pays sur les 5 dernières minutes (fenêtre « active »)
+  const activeSessions = new Map<string, Set<string>>();
+  const activeCutoff = Date.now() - 5 * 60 * 1000;
   const feed: TvEvent[] = [];
   const seriesAgg = new Map<string, number>();
   const sites: TvSite[] = [];
@@ -193,6 +200,11 @@ async function buildPayload(): Promise<TvLivePayload> {
     }
     for (const e of realtime.events ?? []) {
       if (e.__type !== "pageview" || !e.createdAt) continue;
+      if (e.country && new Date(e.createdAt).getTime() >= activeCutoff) {
+        const iso = e.country.toUpperCase();
+        if (!activeSessions.has(iso)) activeSessions.set(iso, new Set());
+        activeSessions.get(iso)?.add(e.sessionId ?? `${w.key}-${e.createdAt}`);
+      }
       feed.push({
         site: w.key,
         siteLabel: w.label,
@@ -226,6 +238,7 @@ async function buildPayload(): Promise<TvLivePayload> {
     viewsToday,
     visitorsToday,
     countries,
+    countriesActive: Object.fromEntries(Array.from(activeSessions.entries()).map(([iso, s]) => [iso, s.size])),
     sites,
     feed: feed.slice(0, 18),
     series,

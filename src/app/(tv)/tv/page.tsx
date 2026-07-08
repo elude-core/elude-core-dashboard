@@ -5,8 +5,30 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useCommerceLive } from "@/hooks/useCommerceLive";
 import { useUmamiLive } from "@/hooks/useUmamiLive";
 
+import { tvAudio } from "./audio";
 import { countryFlag } from "./country-centroids";
 import { WorldMap } from "./WorldMap";
+
+/** Slug d'URL → libellé lisible à 3 m sur une télé.
+ *  "/p/r106-rogneuse-manuelle-sur-stand-neolt..." → "Rogneuse manuelle sur stand Neolt…" */
+function humanizePath(path: string): { kind: string; label: string } {
+  const clean = path.split("?")[0] ?? "/";
+  if (clean === "/" || clean === "") return { kind: "⌂", label: "Accueil" };
+  const seg = clean.split("/").filter(Boolean);
+  const words = (s: string) =>
+    s
+      .replace(/^r\d+-/, "") // préfixe SKU des handles produit
+      .replace(/^\d+-/, "") // préfixe id des slugs catégorie
+      .replace(/-/g, " ")
+      .replace(/^\w/, (c) => c.toUpperCase());
+  if (seg[0] === "p" && seg[1]) return { kind: "Produit", label: words(seg[1]) };
+  if (seg[0] === "c" && seg[1]) return { kind: "Catégorie", label: words(seg[seg.length - 1] ?? seg[1]) };
+  if (seg[0] === "s") return { kind: "Recherche", label: "Recherche catalogue" };
+  if (seg[0] === "b") return { kind: "Guide", label: seg[1] ? words(seg[1]) : "Guides" };
+  if (seg[0] === "cart" || seg[0] === "panier") return { kind: "Panier", label: "Panier" };
+  if (seg[0] === "checkout") return { kind: "Checkout", label: "Paiement en cours" };
+  return { kind: "Page", label: words(seg[seg.length - 1] ?? clean) };
+}
 
 /** ② Decode text (design language Arwes `decipher` / scramble soulwire) :
  *  la valeur se « décode » à travers des glyphes à chaque changement. */
@@ -193,6 +215,7 @@ function OrderFlash({
     if (lastOrderId === null) return;
     if (seen.current !== null && lastOrderId > seen.current && latest) {
       setFlash(latest);
+      tvAudio.order(); // 🔊 le gong commande
       const t = setTimeout(() => setFlash(null), 6000);
       return () => clearTimeout(t);
     }
@@ -223,17 +246,70 @@ function timeAgoShort(iso: string): string {
   return `${Math.floor(m / 1440)}j`;
 }
 
+/** Toggle son (l'autoplay exige un geste utilisateur pour démarrer l'audio).
+ *  Préférence mémorisée ; en kiosk TV : --autoplay-policy=no-user-gesture-required. */
+function SoundToggle() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    // tentative de reprise auto (marche en kiosk --autoplay-policy=... ou si
+    // le navigateur considère le site « engagé ») ; sinon le clic activera.
+    if (!tvAudio.wasEnabled()) return;
+    tvAudio.enable();
+    const t = setTimeout(() => setOn(tvAudio.isRunning()), 400);
+    return () => clearTimeout(t);
+  }, []);
+  const toggle = () => {
+    if (on) {
+      tvAudio.disable();
+      setOn(false);
+    } else {
+      tvAudio.enable();
+      setOn(true);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      className={`fixed right-4 bottom-4 z-[80] border px-3 py-1.5 text-[11px] uppercase tracking-widest transition-colors ${
+        on ? "border-[#22d3ee88] text-[#7df3ff]" : "border-[#1d2a37] text-[#5e8ba3]"
+      } bg-[#06111ccc]`}
+    >
+      {on ? "◉ son actif" : "○ activer le son"}
+    </button>
+  );
+}
+
+/** Déclencheurs sonores : blip quand le nombre d'actifs monte, tonalité devis. */
+function useSoundTriggers(totalActive: number | undefined, quotesToday: number | undefined) {
+  const prevActive = useRef<number | null>(null);
+  const prevQuotes = useRef<number | null>(null);
+  useEffect(() => {
+    if (totalActive === undefined) return;
+    if (prevActive.current !== null && totalActive > prevActive.current) tvAudio.visitor();
+    prevActive.current = totalActive;
+  }, [totalActive]);
+  useEffect(() => {
+    if (quotesToday === undefined) return;
+    if (prevQuotes.current !== null && quotesToday > prevQuotes.current) tvAudio.quote();
+    prevQuotes.current = quotesToday;
+  }, [quotesToday]);
+}
+
 export default function TvPage() {
   const { data, error } = useUmamiLive();
   const { data: commerce } = useCommerceLive();
+  useSoundTriggers(data?.totalActive, commerce?.quotesTodayCount);
 
   const topCountries = Object.entries(data?.countries ?? {})
     .sort(([, a], [, b]) => b - a)
     .slice(0, 6);
+  const sitesSorted = [...(data?.sites ?? [])].sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
       <BootSplash />
+      <SoundToggle />
       <OrderFlash lastOrderId={commerce?.lastOrderId ?? null} latest={commerce?.orders?.[0]} />
       {/* ligne 1 — header */}
       <header className="boot-in flex items-end justify-between" style={{ "--i": 0 } as React.CSSProperties}>
@@ -303,7 +379,13 @@ export default function TvPage() {
             />
           </div>
           <div className="hud-sweep-overlay" />
-          <WorldMap countries={data?.countries ?? {}} />
+          <div
+            className="pointer-events-none absolute top-3.5 left-4 text-[11px] uppercase"
+            style={{ color: INK_DIM, letterSpacing: "0.24em" }}
+          >
+            Activité · 30 min — <span className="text-[#7df3ff]">points brillants = en ligne</span>
+          </div>
+          <WorldMap countries={data?.countries ?? {}} activeCountries={data?.countriesActive ?? {}} />
           {error ? (
             <div className="absolute inset-x-0 bottom-3 text-center text-[#ff9d9d] text-sm">
               ⚠ Flux Umami indisponible — reconnexion automatique
@@ -406,28 +488,28 @@ export default function TvPage() {
 
           <Panel className="boot-in flex min-h-0 flex-1 flex-col p-4" style={{ "--i": 4 } as React.CSSProperties}>
             <PanelTitle>Dernières visites</PanelTitle>
-            <ul
-              className="mt-2.5 min-h-0 flex-1 space-y-[7px] overflow-hidden text-[12.5px] leading-5"
-              style={{ fontFamily: "var(--font-hud-mono), monospace" }}
-            >
-              {(data?.feed ?? []).map((e) => (
-                <li key={`${e.at}-${e.site}-${e.path}`} className="flex items-center gap-2">
-                  <span className="shrink-0 text-[#2dd4ef]">▸</span>
-                  <span className="shrink-0">{countryFlag(e.country)}</span>
-                  <span
-                    className="shrink-0 border border-[#22d3ee2e] bg-[#0a1f2e] px-1.5 text-[10.5px] uppercase tracking-wider"
-                    style={{ color: INK }}
-                  >
-                    {e.siteLabel}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate" style={{ color: "#8fc8dd" }}>
-                    {e.path}
-                  </span>
-                  <span className="shrink-0 tabular-nums" style={{ color: INK_DIM }}>
-                    {timeAgo(e.at)}
-                  </span>
-                </li>
-              ))}
+            <ul className="mt-2.5 min-h-0 flex-1 space-y-2 overflow-hidden text-[14px] leading-6">
+              {(data?.feed ?? []).slice(0, 12).map((e) => {
+                const h = humanizePath(e.path);
+                return (
+                  <li key={`${e.at}-${e.site}-${e.path}`} className="flex items-center gap-2.5">
+                    <span className="shrink-0">{countryFlag(e.country)}</span>
+                    <span
+                      className="shrink-0 border border-[#22d3ee2e] bg-[#0a1f2e] px-1.5 py-0.5 text-[11px] uppercase tracking-wider"
+                      style={{ color: INK }}
+                    >
+                      {e.siteLabel}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate" style={{ color: "#a9d6e8" }} title={e.path}>
+                      {h.kind === "Produit" ? "" : `${h.kind} · `}
+                      {h.label}
+                    </span>
+                    <span className="shrink-0 text-[12px] tabular-nums" style={{ color: INK_DIM }}>
+                      {timeAgo(e.at)}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </Panel>
         </aside>
@@ -435,7 +517,7 @@ export default function TvPage() {
 
       {/* ligne 3 — les sites */}
       <footer className="grid grid-cols-8 gap-3.5">
-        {(data?.sites ?? []).map((s, idx) => {
+        {sitesSorted.map((s, idx) => {
           const hot = s.active > 0;
           return (
             <Panel
@@ -460,7 +542,7 @@ export default function TvPage() {
                 </span>
               </div>
               <div className="mt-1 text-[11px] tabular-nums" style={{ color: INK_DIM }}>
-                {s.viewsToday} pv · jour
+                {s.viewsToday} page{s.viewsToday > 1 ? "s" : ""} vue{s.viewsToday > 1 ? "s" : ""} aujourd&apos;hui
               </div>
             </Panel>
           );
