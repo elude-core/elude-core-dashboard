@@ -20,7 +20,16 @@ import { COUNTRY_CENTROIDS } from "./country-centroids";
 const W = 960;
 const H = 470;
 
-export function WorldMap({ countries }: { countries: Record<string, number> }) {
+export function WorldMap({
+  countries,
+  activeCountries = {},
+}: {
+  /** Trace 30 min (dots estompés). */
+  countries: Record<string, number>;
+  /** Sessions actives ≤ 5 min (dots brillants + pulse) — cohérent avec le
+   *  compteur « en ligne » du header. */
+  activeCountries?: Record<string, number>;
+}) {
   const [landPath, setLandPath] = useState<string | null>(null);
 
   const projection = useMemo(
@@ -56,20 +65,27 @@ export function WorldMap({ countries }: { countries: Record<string, number> }) {
   }, [projection]);
 
   const dots = useMemo(() => {
-    const max = Math.max(1, ...Object.values(countries));
-    return Object.entries(countries)
-      .map(([iso, n]) => {
+    const isos = new Set([...Object.keys(countries), ...Object.keys(activeCountries)]);
+    const all = Array.from(isos).map((iso) => ({
+      iso,
+      n30: countries[iso] ?? 0,
+      nActive: activeCountries[iso.toUpperCase()] ?? activeCountries[iso] ?? 0,
+    }));
+    const max = Math.max(1, ...all.map((d) => Math.max(d.n30, d.nActive)));
+    return all
+      .map(({ iso, n30, nActive }) => {
         const c = COUNTRY_CENTROIDS[iso.toUpperCase()];
         if (!c) return null;
         const xy = projection(c);
         if (!xy) return null;
+        const n = Math.max(n30, nActive);
         // rayon 5→18 px, racine carrée (aire ∝ visiteurs, pas le rayon)
         const r = 5 + 13 * Math.sqrt(n / max);
-        return { iso, n, x: xy[0], y: xy[1], r };
+        return { iso, n: nActive > 0 ? nActive : n30, active: nActive > 0, x: xy[0], y: xy[1], r };
       })
       .filter((d): d is NonNullable<typeof d> => d !== null)
       .sort((a, b) => b.r - a.r);
-  }, [countries, projection]);
+  }, [countries, activeCountries, projection]);
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="Visiteurs actifs par pays">
@@ -103,16 +119,15 @@ export function WorldMap({ countries }: { countries: Record<string, number> }) {
         </>
       ) : null}
 
-      {dots.map((d) => (
-        <g key={d.iso} transform={`translate(${d.x},${d.y})`}>
-          {/* anneau radar pulsant */}
-          <circle r={d.r} fill="none" stroke="#22d3ee" strokeWidth={1.4} className="tv-pulse" />
-          <circle r={d.r} fill="#22d3ee" opacity={0.12} />
-          <circle r={Math.max(3.2, d.r * 0.4)} fill="#7df3ff" filter="url(#hudGlow)" />
-          {/* réticule */}
-          <line x1={-d.r - 6} x2={-d.r - 2} y1={0} y2={0} stroke="#67e8f9" strokeWidth={1} opacity={0.7} />
-          <line x1={d.r + 2} x2={d.r + 6} y1={0} y2={0} stroke="#67e8f9" strokeWidth={1} opacity={0.7} />
-          {d.r >= 9 ? (
+      {dots.map((d) =>
+        d.active ? (
+          // EN LIGNE (≤5 min) : brillant, pulse radar, réticule, label
+          <g key={d.iso} transform={`translate(${d.x},${d.y})`}>
+            <circle r={d.r} fill="none" stroke="#22d3ee" strokeWidth={1.4} className="tv-pulse" />
+            <circle r={d.r} fill="#22d3ee" opacity={0.12} />
+            <circle r={Math.max(3.2, d.r * 0.4)} fill="#7df3ff" filter="url(#hudGlow)" />
+            <line x1={-d.r - 6} x2={-d.r - 2} y1={0} y2={0} stroke="#67e8f9" strokeWidth={1} opacity={0.7} />
+            <line x1={d.r + 2} x2={d.r + 6} y1={0} y2={0} stroke="#67e8f9" strokeWidth={1} opacity={0.7} />
             <text
               y={-d.r - 7}
               textAnchor="middle"
@@ -123,9 +138,14 @@ export function WorldMap({ countries }: { countries: Record<string, number> }) {
             >
               {d.iso} · {d.n}
             </text>
-          ) : null}
-        </g>
-      ))}
+          </g>
+        ) : (
+          // trace 30 min : dot statique estompé, sans pulse ni label
+          <g key={d.iso} transform={`translate(${d.x},${d.y})`} opacity={0.35}>
+            <circle r={Math.max(2.6, d.r * 0.3)} fill="#2dd4ef" />
+          </g>
+        ),
+      )}
     </svg>
   );
 }
