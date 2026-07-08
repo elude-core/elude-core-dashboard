@@ -2,6 +2,7 @@
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { useCommerceLive } from "@/hooks/useCommerceLive";
 import { useUmamiLive } from "@/hooks/useUmamiLive";
 
 import { countryFlag } from "./country-centroids";
@@ -166,8 +167,65 @@ function Sparkline({ series }: { series: Array<{ t: string; views: number }> }) 
 
 const COUNTRY_NAMES = new Intl.DisplayNames(["fr"], { type: "region" });
 
+const EUR = new Intl.NumberFormat("fr-FR", {
+  style: "currency",
+  currency: "EUR",
+  maximumFractionDigits: 0,
+});
+
+/** € décodé (le CA « se calcule » sous les yeux à chaque changement). */
+function DecodedEuro({ value, className }: { value: number | undefined; className?: string }) {
+  const text = useDecode(value === undefined ? "–" : EUR.format(value));
+  return <span className={className}>{text}</span>;
+}
+
+/** Flash plein écran quand une NOUVELLE commande arrive (display_id qui monte). */
+function OrderFlash({
+  lastOrderId,
+  latest,
+}: {
+  lastOrderId: number | null;
+  latest?: { brand: string; total: number; displayId: number };
+}) {
+  const seen = useRef<number | null>(null);
+  const [flash, setFlash] = useState<{ brand: string; total: number; displayId: number } | null>(null);
+  useEffect(() => {
+    if (lastOrderId === null) return;
+    if (seen.current !== null && lastOrderId > seen.current && latest) {
+      setFlash(latest);
+      const t = setTimeout(() => setFlash(null), 6000);
+      return () => clearTimeout(t);
+    }
+    seen.current = lastOrderId;
+  }, [lastOrderId, latest]);
+  useEffect(() => {
+    if (lastOrderId !== null) seen.current = lastOrderId;
+  }, [lastOrderId]);
+  if (!flash) return null;
+  return (
+    <div className="absolute inset-0 z-[70] flex flex-col items-center justify-center gap-5 bg-[#030a12ee]">
+      <Rings size={130} />
+      <div className="hud-glow font-semibold text-2xl text-[#7df3ff] uppercase" style={{ letterSpacing: "0.42em" }}>
+        Nouvelle commande
+      </div>
+      <div className="hud-glow font-bold text-8xl text-[#e6fbff] tabular-nums">{EUR.format(flash.total)}</div>
+      <div className="text-xl uppercase" style={{ color: INK, letterSpacing: "0.2em" }}>
+        #{flash.displayId} · {flash.brand}
+      </div>
+    </div>
+  );
+}
+
+function timeAgoShort(iso: string): string {
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 60) return `${m}min`;
+  if (m < 1440) return `${Math.floor(m / 60)}h`;
+  return `${Math.floor(m / 1440)}j`;
+}
+
 export default function TvPage() {
   const { data, error } = useUmamiLive();
+  const { data: commerce } = useCommerceLive();
 
   const topCountries = Object.entries(data?.countries ?? {})
     .sort(([, a], [, b]) => b - a)
@@ -176,6 +234,7 @@ export default function TvPage() {
   return (
     <div className="flex h-full flex-col gap-4 p-6">
       <BootSplash />
+      <OrderFlash lastOrderId={commerce?.lastOrderId ?? null} latest={commerce?.orders?.[0]} />
       {/* ligne 1 — header */}
       <header className="boot-in flex items-end justify-between" style={{ "--i": 0 } as React.CSSProperties}>
         <div className="flex items-end gap-12">
@@ -254,6 +313,58 @@ export default function TvPage() {
 
         <aside className="flex w-[430px] min-w-[370px] flex-col gap-4">
           <Panel className="boot-in p-4" style={{ "--i": 2 } as React.CSSProperties}>
+            <PanelTitle>Commerce · jour</PanelTitle>
+            <div className="mt-2 flex items-end justify-between">
+              <DecodedEuro
+                value={commerce?.caToday}
+                className="hud-glow font-bold text-5xl text-[#e6fbff] tabular-nums"
+              />
+              <div
+                className="pb-1 text-right text-[12px] uppercase"
+                style={{ color: INK_DIM, letterSpacing: "0.14em" }}
+              >
+                <div>
+                  <span className="font-bold text-[#d7f4ff] text-[15px] tabular-nums">
+                    {commerce?.ordersTodayCount ?? "–"}
+                  </span>{" "}
+                  commande{(commerce?.ordersTodayCount ?? 0) > 1 ? "s" : ""}
+                </div>
+                <div>
+                  <span className="font-bold text-[#d7f4ff] text-[15px] tabular-nums">
+                    {commerce?.quotesTodayCount ?? "–"}
+                  </span>{" "}
+                  devis
+                </div>
+              </div>
+            </div>
+            <ul
+              className="mt-2 space-y-[5px] text-[12px] leading-5"
+              style={{ fontFamily: "var(--font-hud-mono), monospace" }}
+            >
+              {(commerce?.orders ?? []).slice(0, 3).map((o) => (
+                <li key={o.displayId} className="flex items-center gap-2">
+                  <span className="shrink-0 text-[#2dd4ef]">€</span>
+                  <span className="shrink-0" style={{ color: INK }}>
+                    #{o.displayId}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate" style={{ color: "#8fc8dd" }}>
+                    {o.brand}
+                  </span>
+                  <span className="shrink-0 font-bold text-[#d7f4ff] tabular-nums">{EUR.format(o.total)}</span>
+                  <span className="shrink-0 tabular-nums" style={{ color: INK_DIM }}>
+                    {timeAgoShort(o.at)}
+                  </span>
+                </li>
+              ))}
+              {(commerce?.orders ?? []).length === 0 ? (
+                <li className="text-[12px]" style={{ color: INK_DIM }}>
+                  — aucune commande —
+                </li>
+              ) : null}
+            </ul>
+          </Panel>
+
+          <Panel className="boot-in p-4" style={{ "--i": 2.5 } as React.CSSProperties}>
             <PanelTitle>Trafic · 30 min</PanelTitle>
             <div className="mt-2">
               <Sparkline series={data?.series ?? []} />
