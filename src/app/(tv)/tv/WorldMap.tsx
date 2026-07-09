@@ -20,10 +20,11 @@ import { COUNTRY_CENTROIDS } from "./country-centroids";
 const W = 960;
 const H = 470;
 
-/** Fenêtre business : Europe + Afrique (+ frange Moyen-Orient). Le reste du
- *  monde n'est pas l'audience — les visiteurs hors zone sont agrégés dans un
- *  chip « hors zone » au lieu de polluer la carte (bots US/HK notamment). */
-const ZONE = { lonMin: -30, lonMax: 62, latMin: -36, latMax: 71 };
+/** Fenêtre business : Europe + Maghreb (l'audience réelle). Aspect proche de
+ *  l'écran → zoom ×3 vs monde (scale 678, calibré numériquement — Canaries→
+ *  Helsinki, Agadir→Istanbul visibles). Les visiteurs hors fenêtre (Afrique
+ *  subsaharienne, DOM, bots US/HK…) sont agrégés dans le chip « hors zone ». */
+const ZONE = { lonMin: -18, lonMax: 42, latMin: 26, latMax: 62 };
 // ⚠️ d3-geo est sphérique : cet enroulement-ci désigne bien la PETITE zone
 // (vérifié numériquement : scale 215 vs 160 monde) — ne pas « corriger ».
 const ZONE_POLYGON = {
