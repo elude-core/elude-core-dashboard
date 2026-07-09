@@ -20,6 +20,27 @@ import { COUNTRY_CENTROIDS } from "./country-centroids";
 const W = 960;
 const H = 470;
 
+/** Fenêtre business : Europe + Afrique (+ frange Moyen-Orient). Le reste du
+ *  monde n'est pas l'audience — les visiteurs hors zone sont agrégés dans un
+ *  chip « hors zone » au lieu de polluer la carte (bots US/HK notamment). */
+const ZONE = { lonMin: -30, lonMax: 62, latMin: -36, latMax: 71 };
+// ⚠️ d3-geo est sphérique : cet enroulement-ci désigne bien la PETITE zone
+// (vérifié numériquement : scale 215 vs 160 monde) — ne pas « corriger ».
+const ZONE_POLYGON = {
+  type: "Polygon",
+  coordinates: [
+    [
+      [ZONE.lonMin, ZONE.latMax],
+      [ZONE.lonMax, ZONE.latMax],
+      [ZONE.lonMax, ZONE.latMin],
+      [ZONE.lonMin, ZONE.latMin],
+      [ZONE.lonMin, ZONE.latMax],
+    ],
+  ],
+} as const;
+const inZone = ([lon, lat]: [number, number]) =>
+  lon >= ZONE.lonMin && lon <= ZONE.lonMax && lat >= ZONE.latMin && lat <= ZONE.latMax;
+
 export function WorldMap({
   countries,
   activeCountries = {},
@@ -39,11 +60,17 @@ export function WorldMap({
           [8, 8],
           [W - 8, H - 8],
         ],
-        { type: "Sphere" },
+        ZONE_POLYGON as unknown as { type: "Polygon"; coordinates: number[][][] },
       ),
     [],
   );
   const graticulePath = useMemo(() => geoPath(projection)(geoGraticule10()) ?? undefined, [projection]);
+  /** Bornes px de la zone business → vignettes latérales « focus » (le reste
+   *  du monde reste visible mais assombri, façon ciblage HUD). */
+  const zoneBounds = useMemo(
+    () => geoPath(projection).bounds(ZONE_POLYGON as unknown as Parameters<ReturnType<typeof geoPath>["bounds"]>[0]),
+    [projection],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -64,7 +91,7 @@ export function WorldMap({
     };
   }, [projection]);
 
-  const dots = useMemo(() => {
+  const { dots, outOfZone, outOfZoneActive } = useMemo(() => {
     const isos = new Set([...Object.keys(countries), ...Object.keys(activeCountries)]);
     const all = Array.from(isos).map((iso) => ({
       iso,
@@ -72,10 +99,16 @@ export function WorldMap({
       nActive: activeCountries[iso.toUpperCase()] ?? activeCountries[iso] ?? 0,
     }));
     const max = Math.max(1, ...all.map((d) => Math.max(d.n30, d.nActive)));
-    return all
+    let out = 0;
+    let outActive = 0;
+    const list = all
       .map(({ iso, n30, nActive }) => {
         const c = COUNTRY_CENTROIDS[iso.toUpperCase()];
-        if (!c) return null;
+        if (!c || !inZone(c)) {
+          out += Math.max(n30, nActive);
+          outActive += nActive;
+          return null;
+        }
         const xy = projection(c);
         if (!xy) return null;
         const n = Math.max(n30, nActive);
@@ -85,6 +118,7 @@ export function WorldMap({
       })
       .filter((d): d is NonNullable<typeof d> => d !== null)
       .sort((a, b) => b.r - a.r);
+    return { dots: list, outOfZone: out, outOfZoneActive: outActive };
   }, [countries, activeCountries, projection]);
 
   return (
@@ -119,6 +153,37 @@ export function WorldMap({
         </>
       ) : null}
 
+      {/* focus zone : le hors-zone est assombri, cadres verticaux aux bornes */}
+      <rect x={0} y={0} width={Math.max(0, zoneBounds[0][0])} height={H} fill="#05090f" opacity={0.62} />
+      <rect
+        x={Math.min(W, zoneBounds[1][0])}
+        y={0}
+        width={Math.max(0, W - zoneBounds[1][0])}
+        height={H}
+        fill="#05090f"
+        opacity={0.62}
+      />
+      <line
+        x1={zoneBounds[0][0]}
+        x2={zoneBounds[0][0]}
+        y1={6}
+        y2={H - 6}
+        stroke="#22d3ee"
+        strokeWidth={0.8}
+        opacity={0.25}
+        strokeDasharray="2 6"
+      />
+      <line
+        x1={zoneBounds[1][0]}
+        x2={zoneBounds[1][0]}
+        y1={6}
+        y2={H - 6}
+        stroke="#22d3ee"
+        strokeWidth={0.8}
+        opacity={0.25}
+        strokeDasharray="2 6"
+      />
+
       {dots.map((d) =>
         d.active ? (
           // EN LIGNE (≤5 min) : brillant, pulse radar, réticule, label
@@ -146,6 +211,12 @@ export function WorldMap({
           </g>
         ),
       )}
+
+      {outOfZone > 0 ? (
+        <text x={W - 14} y={H - 14} textAnchor="end" fill="#5e8ba3" fontSize={12} style={{ letterSpacing: "0.12em" }}>
+          + {outOfZone} hors zone{outOfZoneActive > 0 ? ` (${outOfZoneActive} en ligne)` : ""}
+        </text>
+      ) : null}
     </svg>
   );
 }
