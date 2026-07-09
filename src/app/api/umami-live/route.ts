@@ -71,6 +71,10 @@ export interface TvLivePayload {
   /** ISO2 → sessions ACTIVES (events ≤ 5 min) — aligne les dots brillants de
    *  la map sur la fenêtre « en ligne » ; le 30 min = trace estompée. */
   countriesActive: Record<string, number>;
+  /** Villes (metrics Umami, fenêtre 30 min / 5 min) — pour des dots précis ;
+   *  ville sans coordonnées connues → repli sur le dot pays côté map. */
+  cities: Array<{ city: string; country: string | null; n: number }>;
+  citiesActive: Array<{ city: string; country: string | null; n: number }>;
   sites: TvSite[];
   /** Dernières pages vues tous sites confondus (desc). */
   feed: TvEvent[];
@@ -163,9 +167,10 @@ async function buildPayload(): Promise<TvLivePayload> {
   const startToday = parisMidnightMs();
   const endNow = Date.now();
 
+  type CityMetric = { x?: string | null; y?: number; country?: string | null };
   const perSite = await Promise.all(
     WEBSITES.map(async (w) => {
-      const [active, realtime, today] = await Promise.all([
+      const [active, realtime, today, cities30, cities5] = await Promise.all([
         umamiGet<{ visitors?: number }>(`/api/websites/${w.id}/active`).catch(() => ({ visitors: 0 })),
         umamiGet<RealtimeResponse>(`/api/realtime/${w.id}?timezone=${encodeURIComponent(TIMEZONE)}`).catch(
           () => ({}) as RealtimeResponse,
@@ -173,10 +178,31 @@ async function buildPayload(): Promise<TvLivePayload> {
         umamiGet<StatsResponse>(`/api/websites/${w.id}/stats?startAt=${startToday}&endAt=${endNow}`).catch(
           (): StatsResponse => ({}),
         ),
+        umamiGet<CityMetric[]>(
+          `/api/websites/${w.id}/metrics?type=city&startAt=${endNow - 1_800_000}&endAt=${endNow}`,
+        ).catch((): CityMetric[] => []),
+        umamiGet<CityMetric[]>(
+          `/api/websites/${w.id}/metrics?type=city&startAt=${endNow - 300_000}&endAt=${endNow}`,
+        ).catch((): CityMetric[] => []),
       ]);
-      return { w, active: active.visitors ?? 0, realtime, today };
+      return { w, active: active.visitors ?? 0, realtime, today, cities30, cities5 };
     }),
   );
+
+  // Agrégation villes cross-sites (clé pays|ville)
+  const cityAgg = (rows: CityMetric[][]): Array<{ city: string; country: string | null; n: number }> => {
+    const m = new Map<string, { city: string; country: string | null; n: number }>();
+    for (const list of rows) {
+      for (const r of list) {
+        if (!r.x) continue;
+        const key = `${r.country ?? ""}|${r.x}`;
+        const cur = m.get(key);
+        if (cur) cur.n += r.y ?? 0;
+        else m.set(key, { city: r.x, country: r.country ?? null, n: r.y ?? 0 });
+      }
+    }
+    return Array.from(m.values());
+  };
 
   const countries: Record<string, number> = {};
   // sessions uniques par pays sur les 5 dernières minutes (fenêtre « active »)
@@ -247,6 +273,8 @@ async function buildPayload(): Promise<TvLivePayload> {
     visitorsToday,
     countries,
     countriesActive: Object.fromEntries(Array.from(activeSessions.entries()).map(([iso, s]) => [iso, s.size])),
+    cities: cityAgg(perSite.map((s) => s.cities30)),
+    citiesActive: cityAgg(perSite.map((s) => s.cities5)),
     sites,
     feed: feed.slice(0, 18),
     series,

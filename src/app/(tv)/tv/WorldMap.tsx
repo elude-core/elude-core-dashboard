@@ -7,7 +7,10 @@ import type { FeatureCollection, Geometry } from "geojson";
 import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 
+import { cityCoords } from "./city-coords";
 import { COUNTRY_CENTROIDS } from "./country-centroids";
+
+type CityCount = { city: string; country: string | null; n: number };
 
 /**
  * Carte monde HUD — landmass holographique (contour cyan lumineux) +
@@ -45,12 +48,18 @@ const inZone = ([lon, lat]: [number, number]) =>
 export function WorldMap({
   countries,
   activeCountries = {},
+  cities = [],
+  activeCities = [],
 }: {
   /** Trace 30 min (dots estompés). */
   countries: Record<string, number>;
   /** Sessions actives ≤ 5 min (dots brillants + pulse) — cohérent avec le
    *  compteur « en ligne » du header. */
   activeCountries?: Record<string, number>;
+  /** Villes 30 min / 5 min : dots placés à la VILLE quand ses coordonnées
+   *  sont connues ; sinon le compte retombe dans le dot pays (résiduel). */
+  cities?: CityCount[];
+  activeCities?: CityCount[];
 }) {
   const [landPath, setLandPath] = useState<string | null>(null);
 
@@ -93,34 +102,76 @@ export function WorldMap({
   }, [projection]);
 
   const { dots, outOfZone, outOfZoneActive } = useMemo(() => {
+    // 1 spot = 1 ville placable, ou le résiduel d'un pays (villes inconnues /
+    // sans coordonnées) au centroïde. `n30`/`nActive` par spot.
+    type Spot = { label: string; coords: [number, number]; n30: number; nActive: number };
+    const spots = new Map<string, Spot>();
+    const placed30 = new Map<string, number>(); // iso → n placé en ville
+    const placedActive = new Map<string, number>();
+
+    const addCity = (list: CityCount[], field: "n30" | "nActive", placed: Map<string, number>) => {
+      for (const c of list) {
+        const coords = cityCoords(c.city);
+        if (!coords) continue;
+        const iso = (c.country ?? "").toUpperCase();
+        const key = `c:${iso}|${c.city}`;
+        const cur = spots.get(key) ?? { label: c.city, coords, n30: 0, nActive: 0 };
+        cur[field] += c.n;
+        spots.set(key, cur);
+        if (iso) placed.set(iso, (placed.get(iso) ?? 0) + c.n);
+      }
+    };
+    addCity(cities, "n30", placed30);
+    addCity(activeCities, "nActive", placedActive);
+
+    // résiduels pays (sessions dont la ville est inconnue ou hors table)
     const isos = new Set([...Object.keys(countries), ...Object.keys(activeCountries)]);
-    const all = Array.from(isos).map((iso) => ({
-      iso,
-      n30: countries[iso] ?? 0,
-      nActive: activeCountries[iso.toUpperCase()] ?? activeCountries[iso] ?? 0,
-    }));
+    for (const isoRaw of isos) {
+      const iso = isoRaw.toUpperCase();
+      const res30 = Math.max(0, (countries[isoRaw] ?? 0) - (placed30.get(iso) ?? 0));
+      const resActive = Math.max(0, (activeCountries[isoRaw] ?? 0) - (placedActive.get(iso) ?? 0));
+      if (res30 === 0 && resActive === 0) continue;
+      const c = COUNTRY_CENTROIDS[iso];
+      const key = `k:${iso}`;
+      const cur = spots.get(key) ?? { label: iso, coords: c ?? [0, 0], n30: 0, nActive: 0 };
+      cur.n30 += res30;
+      cur.nActive += resActive;
+      if (c) spots.set(key, cur);
+      else {
+        // pays sans centroïde connu → directement hors zone
+        spots.set(key, { ...cur, coords: [999, 999] });
+      }
+    }
+
+    const all = Array.from(spots.values());
     const max = Math.max(1, ...all.map((d) => Math.max(d.n30, d.nActive)));
     let out = 0;
     let outActive = 0;
     const list = all
-      .map(({ iso, n30, nActive }) => {
-        const c = COUNTRY_CENTROIDS[iso.toUpperCase()];
-        if (!c || !inZone(c)) {
-          out += Math.max(n30, nActive);
-          outActive += nActive;
+      .map((s) => {
+        if (!inZone(s.coords)) {
+          out += Math.max(s.n30, s.nActive);
+          outActive += s.nActive;
           return null;
         }
-        const xy = projection(c);
+        const xy = projection(s.coords);
         if (!xy) return null;
-        const n = Math.max(n30, nActive);
+        const n = Math.max(s.n30, s.nActive);
         // rayon 5→18 px, racine carrée (aire ∝ visiteurs, pas le rayon)
         const r = 5 + 13 * Math.sqrt(n / max);
-        return { iso, n: nActive > 0 ? nActive : n30, active: nActive > 0, x: xy[0], y: xy[1], r };
+        return {
+          iso: s.label,
+          n: s.nActive > 0 ? s.nActive : s.n30,
+          active: s.nActive > 0,
+          x: xy[0],
+          y: xy[1],
+          r,
+        };
       })
       .filter((d): d is NonNullable<typeof d> => d !== null)
       .sort((a, b) => b.r - a.r);
     return { dots: list, outOfZone: out, outOfZoneActive: outActive };
-  }, [countries, activeCountries, projection]);
+  }, [countries, activeCountries, cities, activeCities, projection]);
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="Visiteurs actifs par pays">

@@ -385,7 +385,12 @@ export default function TvPage() {
           >
             Activité · 30 min — <span className="text-[#7df3ff]">points brillants = en ligne</span>
           </div>
-          <WorldMap countries={data?.countries ?? {}} activeCountries={data?.countriesActive ?? {}} />
+          <WorldMap
+            countries={data?.countries ?? {}}
+            activeCountries={data?.countriesActive ?? {}}
+            cities={data?.cities ?? []}
+            activeCities={data?.citiesActive ?? []}
+          />
           {error ? (
             <div className="absolute inset-x-0 bottom-3 text-center text-[#ff9d9d] text-sm">
               ⚠ Flux Umami indisponible — reconnexion automatique
