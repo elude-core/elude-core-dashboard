@@ -74,13 +74,18 @@ function Rings({ size }: { size: number }) {
   );
 }
 
-/** Splash « système en ligne » (~2 s au boot, façon eDEX-UI). */
+/** Splash « système en ligne » (~2 s au boot, façon eDEX-UI).
+ *  `fixed` (pas absolute) : la page mobile scrolle — un overlay absolute se
+ *  centre sur TOUTE la hauteur de contenu et son texte sort du viewport. */
 function BootSplash() {
   const text = useDecode("ELUDE · SYSTÈME EN LIGNE");
   return (
-    <div className="hud-splash absolute inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-[#030a12]">
+    <div className="hud-splash fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-[#030a12]">
       <Rings size={110} />
-      <div className="hud-glow font-semibold text-3xl text-[#d7f4ff] uppercase" style={{ letterSpacing: "0.42em" }}>
+      <div
+        className="hud-glow px-5 text-center font-semibold text-[#d7f4ff] text-xl uppercase lg:text-3xl"
+        style={{ letterSpacing: "0.42em" }}
+      >
         {text}
       </div>
     </div>
@@ -226,7 +231,8 @@ function OrderFlash({
   }, [lastOrderId]);
   if (!flash) return null;
   return (
-    <div className="absolute inset-0 z-[70] flex flex-col items-center justify-center gap-5 bg-[#030a12ee]">
+    // fixed : visible quelle que soit la position de scroll (mobile).
+    <div className="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-5 bg-[#030a12ee]">
       <Rings size={130} />
       <div className="hud-glow font-semibold text-2xl text-[#7df3ff] uppercase" style={{ letterSpacing: "0.42em" }}>
         Nouvelle commande
