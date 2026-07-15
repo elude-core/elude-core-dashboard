@@ -113,7 +113,7 @@ export default function TvLayout({ children }: { children: ReactNode }) {
         @keyframes splashOut { to { opacity: 0; visibility: hidden; } }
         .hud-splash { animation: splashOut .6s ease-in forwards 2s; }
       `}</style>
-      <div className="tv-bg tv-scan absolute inset-0">{children}</div>
+      <div className="tv-bg tv-scan absolute inset-0 overflow-y-auto lg:overflow-hidden">{children}</div>
     </div>
   );
 }

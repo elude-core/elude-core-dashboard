@@ -231,8 +231,10 @@ function OrderFlash({
       <div className="hud-glow font-semibold text-2xl text-[#7df3ff] uppercase" style={{ letterSpacing: "0.42em" }}>
         Nouvelle commande
       </div>
-      <div className="hud-glow font-bold text-8xl text-[#e6fbff] tabular-nums">{EUR.format(flash.total)}</div>
-      <div className="text-xl uppercase" style={{ color: INK, letterSpacing: "0.2em" }}>
+      <div className="hud-glow font-bold text-5xl text-[#e6fbff] tabular-nums lg:text-8xl">
+        {EUR.format(flash.total)}
+      </div>
+      <div className="px-4 text-center text-base uppercase lg:text-xl" style={{ color: INK, letterSpacing: "0.2em" }}>
         #{flash.displayId} · {flash.brand}
       </div>
     </div>
@@ -307,13 +309,17 @@ export default function TvPage() {
   const sitesSorted = [...(data?.sites ?? [])].sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
+    // Mobile (< lg) : colonne scrollable — la TV garde sa vue unique sans scroll.
+    <div className="flex min-h-full flex-col gap-3 p-3 lg:h-full lg:gap-4 lg:p-6">
       <BootSplash />
       <SoundToggle />
       <OrderFlash lastOrderId={commerce?.lastOrderId ?? null} latest={commerce?.orders?.[0]} />
       {/* ligne 1 — header */}
-      <header className="boot-in flex items-end justify-between" style={{ "--i": 0 } as React.CSSProperties}>
-        <div className="flex items-end gap-12">
+      <header
+        className="boot-in flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between"
+        style={{ "--i": 0 } as React.CSSProperties}
+      >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:gap-12">
           <div className="flex items-center gap-6">
             <div className="hud-flicker hidden 2xl:block">
               <Rings size={92} />
@@ -329,18 +335,21 @@ export default function TvPage() {
                 </span>
                 Elude · Réseau live
               </div>
-              <div className="mt-1 flex items-baseline gap-4">
+              <div className="mt-1 flex items-baseline gap-3 lg:gap-4">
                 <DecodedNumber
                   value={data?.totalActive}
-                  className="hud-glow tv-breathe font-bold text-[#e6fbff] text-[7.5rem] tabular-nums leading-none"
+                  className="hud-glow tv-breathe font-bold text-[#e6fbff] text-7xl tabular-nums leading-none lg:text-[7.5rem]"
                 />
-                <span className="font-medium text-2xl uppercase" style={{ color: INK, letterSpacing: "0.12em" }}>
+                <span
+                  className="font-medium text-lg uppercase lg:text-2xl"
+                  style={{ color: INK, letterSpacing: "0.12em" }}
+                >
                   visiteur{(data?.totalActive ?? 0) > 1 ? "s" : ""} en ligne
                 </span>
               </div>
             </div>
           </div>
-          <dl className="flex gap-10 pb-2 text-center">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-center lg:flex lg:gap-10 lg:pb-2">
             {[
               { label: "Visiteurs · 30 min", value: data?.visitors30m },
               { label: "Pages vues · 30 min", value: data?.views30m },
@@ -351,7 +360,7 @@ export default function TvPage() {
                 <dd>
                   <DecodedNumber
                     value={s.value}
-                    className="hud-glow font-semibold text-5xl text-[#d7f4ff] tabular-nums"
+                    className="hud-glow font-semibold text-3xl text-[#d7f4ff] tabular-nums lg:text-5xl"
                   />
                 </dd>
                 <dt
@@ -364,12 +373,17 @@ export default function TvPage() {
             ))}
           </dl>
         </div>
-        <Clock />
+        <div className="hidden lg:block">
+          <Clock />
+        </div>
       </header>
 
-      {/* ligne 2 — map + colonne latérale */}
-      <div className="flex min-h-0 flex-1 gap-4">
-        <Panel className="boot-in relative min-w-0 flex-[2.4] p-2" style={{ "--i": 1 } as React.CSSProperties}>
+      {/* ligne 2 — map + colonne latérale (empilées < lg) */}
+      <div className="flex flex-col gap-3 lg:min-h-0 lg:flex-1 lg:flex-row lg:gap-4">
+        <Panel
+          className="boot-in relative h-[36vh] min-w-0 shrink-0 p-2 lg:h-auto lg:flex-[2.4] lg:shrink"
+          style={{ "--i": 1 } as React.CSSProperties}
+        >
           {/* radar sweep décoratif */}
           <div className="pointer-events-none absolute top-4 right-4 h-16 w-16 rounded-full border border-[#22d3ee33]">
             <div className="absolute inset-1 rounded-full border border-[#22d3ee22]" />
@@ -398,7 +412,7 @@ export default function TvPage() {
           ) : null}
         </Panel>
 
-        <aside className="flex w-[430px] min-w-[370px] flex-col gap-4">
+        <aside className="flex w-full flex-col gap-3 lg:w-[430px] lg:min-w-[370px] lg:gap-4">
           <Panel className="boot-in p-4" style={{ "--i": 2 } as React.CSSProperties}>
             <PanelTitle>Commerce · jour</PanelTitle>
             <div className="mt-2 flex items-end justify-between">
@@ -521,7 +535,7 @@ export default function TvPage() {
       </div>
 
       {/* ligne 3 — les sites */}
-      <footer className="grid grid-cols-8 gap-3.5">
+      <footer className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8 lg:gap-3.5">
         {sitesSorted.map((s, idx) => {
           const hot = s.active > 0;
           return (
