@@ -2,6 +2,7 @@
 
 import { CmpEngagementPanel } from "@/components/elude/CmpEngagementPanel";
 import { DegradedBanner } from "@/components/elude/DegradedBanner";
+import { FunnelPanel } from "@/components/elude/FunnelPanel";
 import { KpiCard } from "@/components/elude/KpiCard";
 import { KpiCardSkeleton } from "@/components/elude/KpiCardSkeleton";
 import { N8nPanel } from "@/components/elude/N8nPanel";
@@ -55,6 +56,8 @@ export default function HomePage() {
       <N8nPanel />
 
       <CmpEngagementPanel />
+
+      <FunnelPanel />
 
       <QuickLinksGrid />
 
