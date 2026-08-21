@@ -80,7 +80,7 @@ export function FunnelPanel() {
           Funnel par store <span className="font-normal text-gray-400 text-xs">· 14 jours</span>
         </h3>
         <span className="text-gray-400 text-xs">
-          {prodBrands.length <= 1 ? "pro-rogneuses" : `${prodBrands.length} marques`}
+          {prodBrands.length <= 1 ? (prodBrands[0] ?? "—") : `${prodBrands.length} marques`}
         </span>
       </div>
 
