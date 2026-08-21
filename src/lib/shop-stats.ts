@@ -1,6 +1,9 @@
 /**
  * Une marque, un jour : compteurs du funnel + taux dérivés. Taux bornés
- * [0, 100], avec une décimale sous 10 % et aucune au-dessus (voir `pc`).
+ * [0, 100], toujours à une décimale — même contrat qu'elude-sync, qui rend
+ * ses taux journaliers avec une décimale quelle que soit la valeur. L'arrondi
+ * « une décimale sous 10 %, aucune au-dessus » n'existe qu'à l'AFFICHAGE
+ * (`fmtTaux` dans FunnelPanel), pas ici.
  */
 export interface ShopDayBrand {
   pageview: number;
@@ -15,7 +18,14 @@ export interface ShopDayBrand {
 export interface ShopStatsPayload {
   /** Marques connues (inclut les variantes `-dev`). */
   brands: string[];
-  /** { yyyymmdd: { brand: ShopDayBrand } }, jours décroissants. */
+  /**
+   * { yyyymmdd: { brand: ShopDayBrand } }. Les clés `yyyymmdd` sont des
+   * chaînes qui ressemblent à des entiers valides : tout moteur JS les énumère
+   * (Object.keys / for-in) en ordre CROISSANT, quel que soit l'ordre
+   * d'insertion — ne pas supposer un tri ici. Le panneau retrie explicitement
+   * (`dayKeys` dans FunnelPanel), donc rien ne casse, mais ne pas dupliquer
+   * cette hypothèse ailleurs sans retrier.
+   */
   days: Record<string, Record<string, ShopDayBrand>>;
   /** Agrégat période, marques PROD uniquement. */
   totals: ShopDayBrand;
@@ -34,13 +44,17 @@ function vide(): ShopDayBrand {
 }
 
 /**
- * Arrondit un pourcent déjà borné [0, 100] : une décimale sous 10 (la
- * précision y porte l'information — les taux de devis vivent entre 0,3 % et
- * 2 %, l'entier les confond tous), aucune décimale au-dessus (elle n'y
- * change rien à la lecture).
+ * Arrondit un pourcent déjà borné [0, 100] à une décimale, TOUJOURS — aligné
+ * sur le contrat d'elude-sync, qui rend ses taux journaliers avec une
+ * décimale quelle que soit la valeur. Les valeurs journalières arrivent déjà
+ * arrondies ainsi depuis l'amont ; si ce calcul divergeait (ex. un entier
+ * au-dessus de 10), un même couple de nombres afficherait 57,1 d'un côté et
+ * 57 de l'autre — la cohérence ne tiendrait plus que par accident du
+ * formatage d'affichage. Le calcul ne préjuge pas de l'affichage : c'est
+ * `fmtTaux` (FunnelPanel) qui décide de tronquer à l'entier au-dessus de 10.
  */
 function arrondiPct(brut: number): number {
-  return brut < 10 ? Math.round(brut * 10) / 10 : Math.round(brut);
+  return Math.round(brut * 10) / 10;
 }
 
 const pc = (num: number, den: number) => (den > 0 ? arrondiPct(Math.min(100, (num / den) * 100)) : 0);

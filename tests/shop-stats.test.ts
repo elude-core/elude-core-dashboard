@@ -70,8 +70,8 @@ describe("totauxProd", () => {
     // Un mardi à 3000 visites (taux du jour : 10 %) et un dimanche à 40
     // visites (taux du jour : 100 %). Une moyenne simple des deux taux
     // journaliers donnerait (10 + 100) / 2 = 55 %. Sur les totaux réels :
-    // (300 + 40) / (3000 + 40) ≈ 11 %. Un agrégat qui moyenne des taux au
-    // lieu de resommer les compteurs passerait ce test à 55, pas 11.
+    // (300 + 40) / (3000 + 40) ≈ 11,2 %. Un agrégat qui moyenne des taux au
+    // lieu de resommer les compteurs passerait ce test à 55, pas 11,2.
     const t = totauxProd({
       "20260820": {
         wynstor: {
@@ -96,7 +96,7 @@ describe("totauxProd", () => {
         },
       },
     });
-    expect(t.cart_rate).toBe(11);
+    expect(t.cart_rate).toBe(11.2);
   });
 
   test("garde une décimale sous 10 % : deux taux de devis proches restent distincts", () => {
@@ -136,5 +136,28 @@ describe("totauxProd", () => {
     expect(wynstor.quote_rate).toBe(0.9);
     expect(proCisailles.quote_rate).toBe(0.8);
     expect(wynstor.quote_rate).not.toBe(proCisailles.quote_rate);
+  });
+
+  test("garde une décimale AUSSI au-dessus de 10 % : même contrat qu'elude-sync", () => {
+    // elude-sync rend toujours une décimale, y compris au-dessus de 10 %. Si
+    // le calcul du dashboard tronquait à l'entier au-dessus de 10 (l'ancien
+    // comportement), un même couple de nombres afficherait 57 ici et 57,1
+    // depuis l'amont — cohérence tenue par accident du formatage, pas par
+    // contrat. 571 clics devis / 1000 visites = 57,1 % pile : l'ancien arrondi
+    // rendait 57 (entier), celui-ci doit rendre 57,1.
+    const t = totauxProd({
+      "20260821": {
+        wynstor: {
+          pageview: 1000,
+          add_to_cart: 0,
+          add_to_quote: 571,
+          quote_submitted: 0,
+          cart_rate: 0,
+          quote_rate: 0,
+          quote_completion_rate: 0,
+        },
+      },
+    });
+    expect(t.quote_rate).toBe(57.1);
   });
 });

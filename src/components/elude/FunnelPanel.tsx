@@ -2,6 +2,7 @@
 
 import { Eye, Funnel, MousePointerClick, Send, ShoppingCart } from "lucide-react";
 
+import { DegradedBanner } from "@/components/elude/DegradedBanner";
 import { useShopStats } from "@/hooks/useShopStats";
 import type { ShopDayBrand } from "@/lib/shop-stats";
 
@@ -12,10 +13,14 @@ function fmtDay(yyyymmdd: string): string {
 
 /**
  * "0,9 %" sous 10 (la décimale porte l'information — les taux de devis
- * vivent entre 0,3 % et 2 %), "57 %" au-dessus (elle n'y change rien).
+ * vivent entre 0,3 % et 2 %), "57 %" au-dessus (elle n'y change rien). "0 %"
+ * pour un taux nul : la règle "sous 10 → une décimale" l'attraperait aussi et
+ * rendrait "0,0 %", une décimale qui ne porte aucune information sur un
+ * store qui n'a simplement rien eu.
  * Virgule française, pas de point : tout le dashboard est en français.
  */
 function fmtTaux(pct: number): string {
+  if (pct === 0) return "0 %";
   const decimales = pct < 10 ? 1 : 0;
   return `${pct.toLocaleString("fr-FR", { minimumFractionDigits: decimales, maximumFractionDigits: decimales })} %`;
 }
@@ -73,7 +78,7 @@ function BrandTable({ brand, rows }: { brand: string; rows: Array<{ day: string;
 }
 
 export function FunnelPanel() {
-  const { data, isLoading } = useShopStats();
+  const { data, error, isLoading } = useShopStats();
   const payload = data?.data;
   const totals = payload?.totals;
 
@@ -95,9 +100,25 @@ export function FunnelPanel() {
       </div>
 
       <div className="p-5">
+        {data?.stale && (
+          <div className="mb-4">
+            <DegradedBanner state="stale" upstream={data.upstream} staleSinceMs={data.staleSince} />
+          </div>
+        )}
         {isLoading && !payload ? (
           <p className="text-gray-500 text-sm">Chargement…</p>
-        ) : !totals || totals.pageview === 0 ? (
+        ) : error && !payload ? (
+          <p className="text-red-600 text-sm dark:text-red-400">
+            Lecture des stats funnel impossible :{" "}
+            <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">elude-sync</code> est injoignable ou le
+            basicAuth a changé côté dashboard. Le beacon peut très bien émettre normalement — c'est la lecture qui est
+            cassée, pas l'émission. Vérifier{" "}
+            <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">
+              CMP_STATS_URL / SYNC_CMP_USER / SYNC_CMP_PASSWORD
+            </code>{" "}
+            et l'accès à elude-sync.
+          </p>
+        ) : !totals || dayKeys.length === 0 ? (
           <p className="text-gray-500 text-sm">
             Aucune donnée sur la période. Le beacon émet-il en prod (merge storefront{" "}
             <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">dev→main</code>) ?
