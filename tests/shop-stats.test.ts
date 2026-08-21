@@ -98,4 +98,43 @@ describe("totauxProd", () => {
     });
     expect(t.cart_rate).toBe(11);
   });
+
+  test("garde une décimale sous 10 % : deux taux de devis proches restent distincts", () => {
+    // wynstor : 11 clics devis / 1240 visites ≈ 0,887 %.
+    // pro-cisailles : 7 clics devis / 880 visites ≈ 0,795 %.
+    // En pourcent entier (l'ancien comportement), les deux arrondissent à
+    // 1 % — c'est le bug constaté en QA : deux stores à des taux réels très
+    // différents (0,89 % vs 0,80 %) rendus identiques, impossible à comparer.
+    // Cette assertion échoue sur la version entière (1 === 1, pas de
+    // différence) et passe seulement si l'arrondi garde une décimale.
+    const wynstor = totauxProd({
+      "20260821": {
+        wynstor: {
+          pageview: 1240,
+          add_to_cart: 0,
+          add_to_quote: 11,
+          quote_submitted: 0,
+          cart_rate: 0,
+          quote_rate: 0,
+          quote_completion_rate: 0,
+        },
+      },
+    });
+    const proCisailles = totauxProd({
+      "20260821": {
+        "pro-cisailles": {
+          pageview: 880,
+          add_to_cart: 0,
+          add_to_quote: 7,
+          quote_submitted: 0,
+          cart_rate: 0,
+          quote_rate: 0,
+          quote_completion_rate: 0,
+        },
+      },
+    });
+    expect(wynstor.quote_rate).toBe(0.9);
+    expect(proCisailles.quote_rate).toBe(0.8);
+    expect(wynstor.quote_rate).not.toBe(proCisailles.quote_rate);
+  });
 });

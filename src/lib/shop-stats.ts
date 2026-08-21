@@ -1,4 +1,7 @@
-/** Une marque, un jour : compteurs du funnel + taux dérivés (pourcents entiers). */
+/**
+ * Une marque, un jour : compteurs du funnel + taux dérivés. Taux bornés
+ * [0, 100], avec une décimale sous 10 % et aucune au-dessus (voir `pc`).
+ */
 export interface ShopDayBrand {
   pageview: number;
   add_to_cart: number;
@@ -30,7 +33,17 @@ function vide(): ShopDayBrand {
   };
 }
 
-const pc = (num: number, den: number) => (den > 0 ? Math.min(100, Math.round((num / den) * 100)) : 0);
+/**
+ * Arrondit un pourcent déjà borné [0, 100] : une décimale sous 10 (la
+ * précision y porte l'information — les taux de devis vivent entre 0,3 % et
+ * 2 %, l'entier les confond tous), aucune décimale au-dessus (elle n'y
+ * change rien à la lecture).
+ */
+function arrondiPct(brut: number): number {
+  return brut < 10 ? Math.round(brut * 10) / 10 : Math.round(brut);
+}
+
+const pc = (num: number, den: number) => (den > 0 ? arrondiPct(Math.min(100, (num / den) * 100)) : 0);
 
 /**
  * Agrégat de période sur les marques de PRODUCTION.

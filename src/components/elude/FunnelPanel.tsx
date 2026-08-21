@@ -10,6 +10,16 @@ function fmtDay(yyyymmdd: string): string {
   return `${yyyymmdd.slice(6, 8)}/${yyyymmdd.slice(4, 6)}`;
 }
 
+/**
+ * "0,9 %" sous 10 (la décimale porte l'information — les taux de devis
+ * vivent entre 0,3 % et 2 %), "57 %" au-dessus (elle n'y change rien).
+ * Virgule française, pas de point : tout le dashboard est en français.
+ */
+function fmtTaux(pct: number): string {
+  const decimales = pct < 10 ? 1 : 0;
+  return `${pct.toLocaleString("fr-FR", { minimumFractionDigits: decimales, maximumFractionDigits: decimales })} %`;
+}
+
 function Metric({ icon, label, value, hint }: { icon: React.ReactNode; label: string; value: string; hint: string }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -49,10 +59,10 @@ function BrandTable({ brand, rows }: { brand: string; rows: Array<{ day: string;
               <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">{d.add_to_cart}</td>
               <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">{d.add_to_quote}</td>
               <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">{d.quote_submitted}</td>
-              <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">{d.cart_rate}%</td>
-              <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">{d.quote_rate}%</td>
+              <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">{fmtTaux(d.cart_rate)}</td>
+              <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">{fmtTaux(d.quote_rate)}</td>
               <td className="py-2 text-right text-gray-900 tabular-nums dark:text-gray-100">
-                {d.quote_completion_rate}%
+                {fmtTaux(d.quote_completion_rate)}
               </td>
             </tr>
           ))}
@@ -122,19 +132,19 @@ export function FunnelPanel() {
               <Metric
                 icon={<ShoppingCart className="h-3.5 w-3.5" />}
                 label="Tx panier"
-                value={`${totals.cart_rate}%`}
+                value={fmtTaux(totals.cart_rate)}
                 hint="panier / visites"
               />
               <Metric
                 icon={<MousePointerClick className="h-3.5 w-3.5" />}
                 label="Tx devis"
-                value={`${totals.quote_rate}%`}
+                value={fmtTaux(totals.quote_rate)}
                 hint="clic devis / visites"
               />
               <Metric
                 icon={<Send className="h-3.5 w-3.5" />}
                 label="Clic → envoi"
-                value={`${totals.quote_completion_rate}%`}
+                value={fmtTaux(totals.quote_completion_rate)}
                 hint="envoyés / clic devis"
               />
             </div>
