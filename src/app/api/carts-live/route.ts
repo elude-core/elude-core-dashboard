@@ -24,6 +24,11 @@ export type CartEtape = "panier" | "identifie" | "livraison" | "paiement" | "dev
 export interface CartRow {
   id: string;
   at: string;
+  /** "ads" si le panier porte une attribution Google Ads (click_type en
+   *  metadata, stampée par le storefront), "site" sinon. Couverture : les
+   *  commandes depuis le 25/08 ; les paniers en cours après storefront#1174. */
+  source: "ads" | "site";
+  clickType: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -47,6 +52,7 @@ const SQL = `
 SELECT
   c.id,
   c.created_at AS at,
+  c.metadata->>'click_type' AS click_type,
   sc.name AS canal,
   c.email,
   count(li.id)::int AS lignes,
@@ -76,6 +82,7 @@ ORDER BY c.created_at DESC
 interface RawRow {
   id: string;
   at: Date;
+  click_type: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -105,6 +112,8 @@ export async function GET(request: Request) {
       rows: rows.map((r) => ({
         id: r.id,
         at: r.at.toISOString(),
+        source: (r.click_type ? "ads" : "site") as CartRow["source"],
+        clickType: r.click_type,
         canal: r.canal,
         email: r.email,
         lignes: r.lignes,
