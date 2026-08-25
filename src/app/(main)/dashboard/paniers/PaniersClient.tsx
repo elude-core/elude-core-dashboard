@@ -371,8 +371,9 @@ export default function PaniersClient() {
                 <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
                   {r.totalHt.toLocaleString("fr-FR", { minimumFractionDigits: 2 })}
                 </td>
-                <td className="px-3 py-2">
+                <td className="whitespace-nowrap px-3 py-2">
                   <Chip etape={r.etape} />
+                  {r.cp && <span className="ml-1.5 text-muted-foreground text-xs tabular-nums">{r.cp}</span>}
                 </td>
               </tr>
             ))}

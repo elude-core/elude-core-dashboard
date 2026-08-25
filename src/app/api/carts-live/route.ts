@@ -29,6 +29,9 @@ export interface CartRow {
    *  commandes depuis le 25/08 ; les paniers en cours après storefront#1174. */
   source: "ads" | "site";
   clickType: string | null;
+  /** Code postal saisi pour l'estimation des fdp (metadata, posé par le
+   *  storefront à la saisie — couvre les paniers en cours après #1174). */
+  cp: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -53,6 +56,7 @@ SELECT
   c.id,
   c.created_at AS at,
   c.metadata->>'click_type' AS click_type,
+  c.metadata->>'shipping_postal_code' AS cp,
   sc.name AS canal,
   c.email,
   count(li.id)::int AS lignes,
@@ -83,6 +87,7 @@ interface RawRow {
   id: string;
   at: Date;
   click_type: string | null;
+  cp: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -114,6 +119,7 @@ export async function GET(request: Request) {
         at: r.at.toISOString(),
         source: (r.click_type ? "ads" : "site") as CartRow["source"],
         clickType: r.click_type,
+        cp: r.cp,
         canal: r.canal,
         email: r.email,
         lignes: r.lignes,
