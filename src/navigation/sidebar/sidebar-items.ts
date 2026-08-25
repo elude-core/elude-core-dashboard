@@ -7,6 +7,7 @@ import {
   LinkIcon,
   type LucideIcon,
   Server,
+  ShoppingCart,
 } from "lucide-react";
 
 export interface NavSubItem {
@@ -40,6 +41,7 @@ export const sidebarItems: NavGroup[] = [
     label: "Ops",
     items: [
       { title: "Vue d'ensemble", url: "/dashboard", icon: LayoutDashboard },
+      { title: "Paniers", url: "/dashboard/paniers", icon: ShoppingCart, isNew: true },
       { title: "Stack health", url: "/dashboard/stack-health", icon: Activity },
       { title: "Sync pipeline", url: "/dashboard/sync-pipeline", icon: GitBranch },
       { title: "Events", url: "/dashboard/events", icon: CalendarClock },
