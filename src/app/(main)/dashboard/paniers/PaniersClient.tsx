@@ -85,6 +85,7 @@ export default function PaniersClient() {
 
   const [fCanal, setFCanal] = useState("");
   const [fEtape, setFEtape] = useState("");
+  const [fSource, setFSource] = useState("");
   const [fQ, setFQ] = useState("");
   const [sortKey, setSortKey] = useState<"at" | "totalHt">("at");
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
@@ -151,6 +152,7 @@ export default function PaniersClient() {
       (r) =>
         (!fCanal || r.canal === fCanal) &&
         (!fEtape || r.etape === fEtape) &&
+        (!fSource || r.source === fSource) &&
         (!q || (r.email ?? "").toLowerCase().includes(q) || r.produit.toLowerCase().includes(q)),
     );
     return [...out].sort((a, b) => {
@@ -158,7 +160,7 @@ export default function PaniersClient() {
       const kb = sortKey === "at" ? b.at : b.totalHt;
       return (ka < kb ? -1 : ka > kb ? 1 : 0) * sortDir;
     });
-  }, [rows, fCanal, fEtape, fQ, sortKey, sortDir]);
+  }, [rows, fCanal, fEtape, fSource, fQ, sortKey, sortDir]);
 
   const toggleSort = (key: "at" | "totalHt") => {
     setSortDir(sortKey === key ? (d) => (d === -1 ? 1 : -1) : () => -1);
@@ -300,6 +302,16 @@ export default function PaniersClient() {
             </option>
           ))}
         </select>
+        <select
+          value={fSource}
+          onChange={(e) => setFSource(e.target.value)}
+          className="rounded-lg border bg-card px-3 py-1.5 text-sm"
+          aria-label="Filtrer par source"
+        >
+          <option value="">Ads + site</option>
+          <option value="ads">Ads</option>
+          <option value="site">Site</option>
+        </select>
         <input
           type="search"
           value={fQ}
@@ -323,6 +335,7 @@ export default function PaniersClient() {
               <th className="px-3 py-2.5">Canal</th>
               <th className="px-3 py-2.5">Produit</th>
               <th className="px-3 py-2.5">Email</th>
+              <th className="px-3 py-2.5">Src</th>
               <th className="px-3 py-2.5 text-right">Qté</th>
               <th className="cursor-pointer select-none px-3 py-2.5 text-right" onClick={() => toggleSort("totalHt")}>
                 Total HT {sortKey === "totalHt" ? (sortDir === -1 ? "↓" : "↑") : ""}
@@ -342,6 +355,18 @@ export default function PaniersClient() {
                   {r.lignes > 1 && <span className="text-muted-foreground text-xs"> +{r.lignes - 1} art.</span>}
                 </td>
                 <td className="max-w-52 truncate px-3 py-2 text-muted-foreground">{r.email ?? "—"}</td>
+                <td className="px-3 py-2">
+                  {r.source === "ads" ? (
+                    <span
+                      title={r.clickType ?? undefined}
+                      className="inline-block rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-[11px] text-sky-700 dark:bg-sky-950/50 dark:text-sky-300"
+                    >
+                      Ads
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums">{r.qte}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
                   {r.totalHt.toLocaleString("fr-FR", { minimumFractionDigits: 2 })}
