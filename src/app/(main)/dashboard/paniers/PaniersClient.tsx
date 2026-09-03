@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Loader2, RefreshCw, ShoppingCart } from "lucide-react";
 
-import type { CartEtape, CartsLivePayload } from "@/app/api/carts-live/route";
+import type { CartEtape, CartRow, CartsLivePayload } from "@/app/api/carts-live/route";
 import { CommerceStatsPanel } from "@/components/elude/CommerceStatsPanel";
 
 const REFRESH_INTERVAL_MS = 60_000;
@@ -152,40 +152,65 @@ export default function PaniersClient() {
     };
   }, [rows]);
 
-  const perEtape = useMemo(
-    () => ETAPES.map((e) => ({ etape: e, count: rows.filter((r) => r.etape === e).length })),
-    [rows],
+  /**
+   * Filtrage en FACETTES : chaque panneau applique tous les filtres actifs SAUF
+   * le sien.
+   *
+   * 🪤 Une facette qui se filtre elle-même s'auto-détruit : sélectionner l'étape
+   * « Devis » mettrait les cinq autres barres à zéro, et on ne pourrait plus
+   * cliquer ailleurs pour changer d'avis. Chaque panneau doit donc voir le monde
+   * tel qu'il serait SANS sa propre sélection — c'est ce que `sauf` exprime.
+   *
+   * ── Le filtre JOUR vaut « ce qui s'est passé ce jour-là » ───────────────────
+   *
+   * Panier ouvert ce jour OU commande passée ce jour. Filtrer sur la seule date
+   * de commande effondrerait l'entonnoir : seule l'étape « Commande » serait non
+   * nulle, les cinq autres à zéro — un entonnoir qui ne montre plus d'entonnoir.
+   *
+   * ⚠️ Conséquence assumée : la liste peut afficher PLUS de lignes que le nombre
+   * de commandes de la barre cliquée, puisqu'elle inclut les paniers ouverts ce
+   * jour-là qui n'ont pas converti. C'est précisément ce qu'on veut voir en
+   * analysant un pic, mais ça interdit de lire « lignes » comme « commandes ».
+   */
+  const passe = useCallback(
+    (r: CartRow, sauf?: "canal" | "etape" | "source") => {
+      const q = fQ.toLowerCase();
+      return (
+        (sauf === "canal" || !fCanal || r.canal === fCanal) &&
+        (sauf === "etape" || !fEtape || r.etape === fEtape) &&
+        (sauf === "source" || !fSource || r.source === fSource) &&
+        (!fJour || jourParis(r.commandeAt) === fJour || jourParis(r.at) === fJour) &&
+        (!q || (r.email ?? "").toLowerCase().includes(q) || r.produit.toLowerCase().includes(q))
+      );
+    },
+    [fCanal, fEtape, fSource, fJour, fQ],
   );
+
+  const perEtape = useMemo(() => {
+    const base = rows.filter((r) => passe(r, "etape"));
+    return ETAPES.map((e) => ({ etape: e, count: base.filter((r) => r.etape === e).length }));
+  }, [rows, passe]);
   const maxEtape = Math.max(1, ...perEtape.map((x) => x.count));
 
-  const perCanal = useMemo(
-    () =>
-      canaux
-        .map((c) => {
-          const cRows = rows.filter((r) => r.canal === c);
-          return { canal: c, total: cRows.length, conv: cRows.filter((r) => r.etape === "commande").length };
-        })
-        .sort((a, b) => b.total - a.total),
-    [rows, canaux],
-  );
+  const perCanal = useMemo(() => {
+    const base = rows.filter((r) => passe(r, "canal"));
+    return canaux
+      .map((c) => {
+        const cRows = base.filter((r) => r.canal === c);
+        return { canal: c, total: cRows.length, conv: cRows.filter((r) => r.etape === "commande").length };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [rows, canaux, passe]);
   const maxCanal = Math.max(1, ...perCanal.map((x) => x.total));
 
   const filtered = useMemo(() => {
-    const q = fQ.toLowerCase();
-    const out = rows.filter(
-      (r) =>
-        (!fCanal || r.canal === fCanal) &&
-        (!fEtape || r.etape === fEtape) &&
-        (!fSource || r.source === fSource) &&
-        (!fJour || jourParis(r.commandeAt) === fJour) &&
-        (!q || (r.email ?? "").toLowerCase().includes(q) || r.produit.toLowerCase().includes(q)),
-    );
+    const out = rows.filter((r) => passe(r));
     return [...out].sort((a, b) => {
       const ka = sortKey === "at" ? a.at : a.totalHt;
       const kb = sortKey === "at" ? b.at : b.totalHt;
       return (ka < kb ? -1 : ka > kb ? 1 : 0) * sortDir;
     });
-  }, [rows, fCanal, fEtape, fSource, fJour, fQ, sortKey, sortDir]);
+  }, [rows, passe, sortKey, sortDir]);
 
   /**
    * Clic sur une barre du graphe CA. Re-cliquer le même jour désélectionne.
@@ -273,21 +298,35 @@ export default function PaniersClient() {
         <div className="rounded-lg border bg-card p-4">
           <h2 className="mb-3 font-semibold text-muted-foreground text-sm uppercase tracking-wide">Étape atteinte</h2>
           <div className="space-y-2">
-            {perEtape.map(({ etape, count }) => (
-              <div key={etape} className="grid grid-cols-[110px_1fr_44px] items-center gap-2">
-                <span className="flex items-center gap-2 text-muted-foreground text-sm">
-                  <span className={`h-2 w-2 rounded-sm ${ETAPE_META[etape].dot}`} aria-hidden />
-                  {ETAPE_META[etape].label}
-                </span>
-                <div className="relative h-4 rounded bg-muted">
-                  <div
-                    className={`absolute inset-y-0 left-0 min-w-0.5 rounded ${etape === "commande" ? "bg-emerald-500" : "bg-primary/70"}`}
-                    style={{ width: `${(100 * count) / maxEtape}%` }}
-                  />
-                </div>
-                <span className="text-right text-sm tabular-nums">{count}</span>
-              </div>
-            ))}
+            {perEtape.map(({ etape, count }) => {
+              const actif = fEtape === etape;
+              return (
+                <button
+                  key={etape}
+                  type="button"
+                  aria-pressed={actif}
+                  onClick={() => setFEtape(actif ? "" : etape)}
+                  title={actif ? "Cliquer pour retirer le filtre" : `Filtrer sur « ${ETAPE_META[etape].label} »`}
+                  className={`grid w-full grid-cols-[110px_1fr_44px] items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 ${
+                    actif ? "bg-muted" : ""
+                  } ${fEtape && !actif ? "opacity-50" : ""}`}
+                >
+                  <span
+                    className={`flex items-center gap-2 text-sm ${actif ? "font-medium text-foreground" : "text-muted-foreground"}`}
+                  >
+                    <span className={`h-2 w-2 rounded-sm ${ETAPE_META[etape].dot}`} aria-hidden />
+                    {ETAPE_META[etape].label}
+                  </span>
+                  <div className="relative h-4 rounded bg-muted">
+                    <div
+                      className={`absolute inset-y-0 left-0 min-w-0.5 rounded ${etape === "commande" ? "bg-emerald-500" : "bg-primary/70"}`}
+                      style={{ width: `${(100 * count) / maxEtape}%` }}
+                    />
+                  </div>
+                  <span className="text-right text-sm tabular-nums">{count}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -296,37 +335,49 @@ export default function PaniersClient() {
             Par canal — paniers et commandes
           </h2>
           <div className="space-y-3">
-            {perCanal.map(({ canal, total, conv }) => (
-              <div key={canal}>
-                <div className="mb-1 flex items-baseline justify-between text-sm">
-                  <span>{canal}</span>
-                  <span className="text-muted-foreground tabular-nums">
-                    {total} → {conv} ({total > 0 ? Math.round((100 * conv) / total) : 0} %)
-                  </span>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="relative h-2 rounded bg-muted">
-                    <div
-                      className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-primary/70"
-                      style={{ width: `${(100 * total) / maxCanal}%` }}
-                    />
+            {perCanal.map(({ canal, total, conv }) => {
+              const actif = fCanal === canal;
+              return (
+                <button
+                  key={canal}
+                  type="button"
+                  aria-pressed={actif}
+                  onClick={() => setFCanal(actif ? "" : canal)}
+                  title={actif ? "Cliquer pour retirer le filtre" : `Filtrer sur « ${canal} »`}
+                  className={`w-full rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 ${
+                    actif ? "bg-muted" : ""
+                  } ${fCanal && !actif ? "opacity-50" : ""}`}
+                >
+                  <div className="mb-1 flex items-baseline justify-between text-sm">
+                    <span className={actif ? "font-medium" : undefined}>{canal}</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {total} → {conv} ({total > 0 ? Math.round((100 * conv) / total) : 0} %)
+                    </span>
                   </div>
-                  <div className="relative h-2 rounded bg-muted">
-                    <div
-                      className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-emerald-500"
-                      style={{ width: `${(100 * conv) / maxCanal}%` }}
-                    />
+                  <div className="space-y-0.5">
+                    <div className="relative h-2 rounded bg-muted">
+                      <div
+                        className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-primary/70"
+                        style={{ width: `${(100 * total) / maxCanal}%` }}
+                      />
+                    </div>
+                    <div className="relative h-2 rounded bg-muted">
+                      <div
+                        className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-emerald-500"
+                        style={{ width: `${(100 * conv) / maxCanal}%` }}
+                      />
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
       {fJour && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-300 border-dashed bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
-          <span className="text-muted-foreground">Commandes du</span>
+          <span className="text-muted-foreground">Activité du</span>
           <span className="font-medium">
             {new Date(`${fJour}T12:00:00`).toLocaleDateString("fr-FR", {
               weekday: "long",
@@ -335,14 +386,9 @@ export default function PaniersClient() {
             })}
           </span>
           <span className="text-muted-foreground">
-            — {filtered.length} ligne{filtered.length > 1 ? "s" : ""} dans la liste ci-dessous
+            — {filtered.length} panier{filtered.length > 1 ? "s" : ""} ouvert{filtered.length > 1 ? "s" : ""} ou
+            commandé{filtered.length > 1 ? "s" : ""} ce jour-là
           </span>
-          {/* Les panneaux « Étape atteinte » et « Par canal » restent sur la
-              fenêtre entière, et c'est voulu : ils décrivent des PANIERS, dont
-              la plupart n'ont jamais de date de commande. Les filtrer par jour
-              de commande les viderait au lieu de les préciser. Le dire, plutôt
-              que de laisser croire à un filtre global qui ne mord pas. */}
-          <span className="text-muted-foreground text-xs italic">(les compteurs du haut restent sur {days} j)</span>
           <button
             type="button"
             onClick={() => setFJour(null)}
