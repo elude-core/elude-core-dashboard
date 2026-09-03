@@ -77,6 +77,25 @@ function Chip({ etape }: { etape: CartEtape }) {
   );
 }
 
+/**
+ * `device_type` vient de `userAgent()` de Next, dont le vocabulaire est
+ * anglais et technique. On l'affiche en clair — la colonne est lue par des
+ * humains, pas par un script.
+ *
+ * `ordinateur` est posé explicitement par le storefront : cette bibliothèque
+ * rend une valeur VIDE pour un desktop, et une case vide se lirait comme une
+ * donnée manquante.
+ */
+const LIBELLE_APPAREIL: Record<string, string> = {
+  mobile: "Mobile",
+  tablet: "Tablette",
+  ordinateur: "Ordinateur",
+  console: "Console",
+  smarttv: "TV",
+  wearable: "Montre",
+  embedded: "Embarqué",
+};
+
 export default function PaniersClient() {
   const [days, setDays] = useState(7);
   const [payload, setPayload] = useState<CartsLivePayload | null>(null);
@@ -336,6 +355,7 @@ export default function PaniersClient() {
               <th className="px-3 py-2.5">Produit</th>
               <th className="px-3 py-2.5">Email</th>
               <th className="px-3 py-2.5">Src</th>
+              <th className="px-3 py-2.5">Appareil</th>
               <th className="px-3 py-2.5 text-right">Qté</th>
               <th className="cursor-pointer select-none px-3 py-2.5 text-right" onClick={() => toggleSort("totalHt")}>
                 Total HT {sortKey === "totalHt" ? (sortDir === -1 ? "↓" : "↑") : ""}
@@ -362,6 +382,18 @@ export default function PaniersClient() {
                       className="inline-block rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-[11px] text-sky-700 dark:bg-sky-950/50 dark:text-sky-300"
                     >
                       Ads
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2">
+                  {/* ⚠️ `null` = panier ANTÉRIEUR à la capture (storefront#1189),
+                      pas un appareil inconnu. Le tiret le dit sans mentir. */}
+                  {r.device ? (
+                    <span title={[r.deviceOs, r.surface].filter(Boolean).join(" · ") || undefined}>
+                      {LIBELLE_APPAREIL[r.device] ?? r.device}
+                      {r.deviceOs && <span className="ml-1 text-muted-foreground text-xs">{r.deviceOs}</span>}
                     </span>
                   ) : (
                     <span className="text-muted-foreground">—</span>
