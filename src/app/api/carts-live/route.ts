@@ -32,6 +32,16 @@ export interface CartRow {
   /** Code postal saisi pour l'estimation des fdp (metadata, posé par le
    *  storefront à la saisie — couvre les paniers en cours après #1174). */
   cp: string | null;
+  /** Appareil du PREMIER ajout — `mobile`, `tablet`, ou `ordinateur`
+   *  (storefront#1189). ⚠️ `null` sur tout panier antérieur : c'est une
+   *  capture, pas un calcul rétroactif. */
+  device: string | null;
+  /** Système : `iOS`, `Android`, `Windows`, `macOS`… Même couverture. */
+  deviceOs: string | null;
+  /** D'où part le PREMIER ajout : `pdp_barre`, `pdp_variantes`,
+   *  `pdp_buy_with`, `commande_rapide`, `recommande`, `deja_achete`.
+   *  C'est la seule mesure de ce que produit le contenu éditorial. */
+  surface: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -57,6 +67,9 @@ SELECT
   c.created_at AS at,
   c.metadata->>'click_type' AS click_type,
   c.metadata->>'shipping_postal_code' AS cp,
+  c.metadata->>'device_type' AS device,
+  c.metadata->>'device_os' AS device_os,
+  c.metadata->>'add_surface' AS surface,
   sc.name AS canal,
   c.email,
   count(li.id)::int AS lignes,
@@ -78,6 +91,9 @@ JOIN cart_line_item li ON li.cart_id = c.id AND li.deleted_at IS NULL
 WHERE c.created_at >= now() - make_interval(days => $1)
   AND c.deleted_at IS NULL
   AND (c.metadata IS NULL OR c.metadata->>'e2e' IS NULL)
+  -- Même raison que l'e2e : un robot qui crée un panier fausse tous les taux.
+  -- La clé n'est posée que si le user-agent en est un (storefront#1189).
+  AND (c.metadata IS NULL OR c.metadata->>'device_bot' IS NULL)
   AND (c.email IS NULL OR c.email NOT ILIKE '%@elude.fr')
 GROUP BY c.id, sc.name
 ORDER BY c.created_at DESC
@@ -88,6 +104,9 @@ interface RawRow {
   at: Date;
   click_type: string | null;
   cp: string | null;
+  device: string | null;
+  device_os: string | null;
+  surface: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -120,6 +139,9 @@ export async function GET(request: Request) {
         source: (r.click_type ? "ads" : "site") as CartRow["source"],
         clickType: r.click_type,
         cp: r.cp,
+        device: r.device,
+        deviceOs: r.device_os,
+        surface: r.surface,
         canal: r.canal,
         email: r.email,
         lignes: r.lignes,
