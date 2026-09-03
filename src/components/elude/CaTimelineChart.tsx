@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { Bar, BarChart, CartesianGrid, Cell, Line, ReferenceArea, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Line, ReferenceArea, ReferenceLine, XAxis, YAxis } from "recharts";
 
 import type { JourTimeline } from "@/app/api/commerce-stats/route";
 import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart";
@@ -92,6 +92,7 @@ const SERIE = { light: "#9ca3af", dark: "#6b7280" };
 const WEEKEND = { light: "#f3f4f6", dark: "#1c222c" };
 const AUJOURDHUI = { light: "#e5e7eb", dark: "#2b3240" };
 const DEVIS = { light: "#6b7280", dark: "#9ca3af" };
+const GOLIVE = { light: "#4b5563", dark: "#9ca3af" };
 const SELECTION = { light: "#111827", dark: "#f9fafb" };
 const MOYENNE = { light: "#111827", dark: "#f9fafb" };
 
@@ -106,6 +107,29 @@ const slug = (nom: string) =>
 /** Identifiant stable du graphe : `ChartContainer` préfixe par `chart-`. */
 const ID_BRUT = "ca-paniers";
 const ID_GRAPHE = `chart-${ID_BRUT}`;
+
+/**
+ * Mises en ligne des storefronts — repères verticaux optionnels sur le graphe.
+ *
+ * ⚠️ Ces dates viennent de `knowledge/02-playbooks/`, PAS de la base. Le premier
+ * panier d'un canal n'est PAS un proxy du go-live : Pro Cisailles porte UN
+ * panier au 29/06 pour une ouverture le 30/07 — un mois d'écart, laissé par les
+ * espaces de preprod et de dev qui écrivaient dans la même base Medusa.
+ * Ne jamais recalculer ces dates depuis les données.
+ *
+ * (La pollution reste anecdotique, mesuré le 04/09 : 1 panier avant go-live sur
+ * Cisailles, 1 sur Destructeurs, 0 sur Rogneuses, et AUCUNE commande antérieure
+ * à un go-live. Le CA et le taux de conversion ne sont pas affectés.)
+ *
+ * Les canaux absents de cette liste n'ont pas de repère, et c'est volontaire :
+ * mieux vaut un repère manquant qu'un repère faux, qu'on lirait comme une
+ * explication de la courbe.
+ */
+const GO_LIVE: Array<{ date: string; site: string }> = [
+  { date: "2026-06-27", site: "Rogneuses" },
+  { date: "2026-07-30", site: "Cisailles" },
+  { date: "2026-08-20", site: "Destructeurs" },
+];
 
 const versDate = (jour: string) => new Date(`${jour}T12:00:00`);
 
@@ -139,6 +163,7 @@ export function CaTimelineChart({
   const [fenetre, setFenetre] = useState<string>("tout");
   const [parCanal, setParCanal] = useState(false);
   const [avecDevis, setAvecDevis] = useState(false);
+  const [avecGoLive, setAvecGoLive] = useState(false);
   const [canalSurvole, setCanalSurvole] = useState<string | null>(null);
 
   // La ventilation par canal n'existe que pour du CA : un canal ne porte pas de
@@ -189,6 +214,7 @@ export function CaTimelineChart({
       weekend: { label: "Week-end", theme: WEEKEND },
       aujourdhui: { label: "Jour en cours", theme: AUJOURDHUI },
       devis: { label: "Devis", theme: DEVIS },
+      golive: { label: "Mise en ligne", theme: GOLIVE },
       selection: { label: "Jour sélectionné", theme: SELECTION },
     };
     canauxAffiches.forEach((nom, i) => {
@@ -217,6 +243,12 @@ export function CaTimelineChart({
     }
     if (debut !== null && prec !== null) runs.push([debut, prec]);
     return runs;
+  }, [donnees]);
+
+  // Seuls les go-live tombant sur un jour effectivement affiché sont rendus.
+  const reperes = useMemo(() => {
+    const presents = new Set(donnees.map((d) => d.jour));
+    return GO_LIVE.filter((g) => presents.has(g.date));
   }, [donnees]);
 
   const aujourdhui = donnees.find((d) => d.estAujourdhui)?.jour ?? null;
@@ -299,6 +331,19 @@ export function CaTimelineChart({
           >
             Devis
           </button>
+          <button
+            type="button"
+            onClick={() => setAvecGoLive((v) => !v)}
+            aria-pressed={avecGoLive}
+            title="Marquer les mises en ligne des storefronts"
+            className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              avecGoLive
+                ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
+                : "border-gray-200 text-muted-foreground hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+            }`}
+          >
+            Go-live
+          </button>
         </div>
       </div>
 
@@ -330,6 +375,31 @@ export function CaTimelineChart({
               ifOverflow="visible"
             />
           )}
+
+          {/* 🪤 Pas d'étiquette Recharts sur ces repères, et ce n'est pas un
+              oubli : les TROIS formes documentées de `label` (chaîne, objet, et
+              le composant <Label> en enfant) ne produisent AUCUN élément de
+              texte sur Recharts 3 — le <g> ne contient que la <line>, sans la
+              moindre erreur. Le nom du site est donc porté par l'infobulle du
+              jour et par la légende, ce qui se lit mieux qu'un texte vertical
+              de 10 px de toute façon.
+
+              🪤 L'axe X est CATÉGORIEL : `x` doit valoir exactement une valeur
+              présente dans les données. Un go-live hors de la fenêtre affichée
+              (Rogneuses au 27/06, avant la première commande du 14/07) ne rend
+              rien — c'est correct, mais il faut le filtrer explicitement plutôt
+              que de compter sur Recharts pour l'ignorer en silence. */}
+          {avecGoLive &&
+            reperes.map((g) => (
+              <ReferenceLine
+                key={g.date}
+                yAxisId="gauche"
+                x={g.date}
+                stroke="var(--color-golive)"
+                strokeDasharray="2 3"
+                strokeWidth={1}
+              />
+            ))}
 
           <XAxis
             dataKey="jour"
@@ -383,6 +453,10 @@ export function CaTimelineChart({
                     })}
                     {d.estAujourdhui && <span className="ml-1.5 text-muted-foreground">· en cours</span>}
                   </div>
+                  {(() => {
+                    const g = GO_LIVE.find((x) => x.date === d.jour);
+                    return g ? <div className="font-medium">Mise en ligne · {g.site}</div> : null;
+                  })()}
                   <div className="mt-1 tabular-nums">
                     <span className="font-medium">{fmt(Math.round(d[mesure]), unite)}</span>
                     {mesure !== "commandes" && (
@@ -545,6 +619,26 @@ export function CaTimelineChart({
             nb de devis (axe droit)
           </span>
         )}
+        {avecGoLive &&
+          (reperes.length > 0 ? (
+            <span className="flex items-center gap-1.5">
+              <span
+                className="inline-block h-3 w-px"
+                style={{
+                  backgroundImage: "repeating-linear-gradient(180deg, var(--color-golive) 0 2px, transparent 2px 5px)",
+                }}
+              />
+              mise en ligne :{" "}
+              {reperes
+                .map(
+                  (g) =>
+                    `${g.site} ${versDate(g.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`,
+                )
+                .join(" · ")}
+            </span>
+          ) : (
+            <span>aucune mise en ligne sur cette période</span>
+          ))}
         <span>bandes grisées : week-ends</span>
         <span>dernier jour : en cours, hors moyenne</span>
       </div>
