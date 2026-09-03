@@ -64,8 +64,27 @@ export interface StatsFenetre {
   parCanal: Array<{ canal: string; commandes: number; caHt: number }>;
 }
 
+/** Un jour calendaire de la timeline. `caHt` et `commandes` valent 0 les jours creux. */
+export interface JourTimeline {
+  /** `YYYY-MM-DD`, en heure de Paris. */
+  jour: string;
+  caHt: number;
+  commandes: number;
+}
+
 export interface CommerceStatsPayload {
   fenetres: Record<string, StatsFenetre>;
+  /**
+   * CA par jour calendaire, du premier jour d'historique (ou J-89) à aujourd'hui,
+   * SANS trou : les jours sans vente valent 0 et sont présents.
+   *
+   * 🪤 Ces jours ne se resomment PAS en les colonnes ci-dessus. Les fenêtres sont
+   * glissantes (`now() - 7 jours`, à la seconde près), la timeline est en jours
+   * CALENDAIRES d'Europe/Paris. Sur 7 j l'écart porte sur deux demi-journées.
+   * C'est voulu — un graphe quotidien ne peut pas être en fenêtre glissante — mais
+   * ça interdit de valider un total contre l'autre.
+   */
+  timeline: JourTimeline[];
   /**
    * Date de la plus ancienne commande. ⚠️ Nécessaire pour lire les fenêtres
    * sans contresens : mesuré le 03/09, l'historique commence au 14/07, donc
@@ -144,6 +163,48 @@ SELECT sc.name AS canal, count(*)::int AS commandes,
  GROUP BY sc.name ORDER BY ca_ht DESC
 `;
 
+/**
+ * 🪤 `generate_series` sur les jours, PUIS jointure gauche sur les ventes — jamais
+ * un `GROUP BY` seul. Sur l'historique mesuré le 03/09, 19 jours sur 52 n'ont
+ * aucune commande ; un `GROUP BY` les ferait disparaître et le graphe collerait
+ * le 30/07 au 02/08 comme s'ils se suivaient. Les creux sont l'information.
+ *
+ * 🪤 Tout est ramené à `Europe/Paris`. Le conteneur tourne en UTC : sans cette
+ * conversion, une commande passée à 01 h du matin en été compte la VEILLE.
+ *
+ * Borne basse = premier jour d'historique, plafonné à 90 jours pour que le graphe
+ * ne devienne pas illisible quand l'historique grandira.
+ */
+const SQL_TIMELINE = `
+WITH bornes AS (
+  SELECT GREATEST(
+           date_trunc('day', min(o.created_at AT TIME ZONE 'Europe/Paris')),
+           date_trunc('day', now() AT TIME ZONE 'Europe/Paris') - interval '89 days'
+         )::date AS debut
+    FROM "order" o
+   WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+), jours AS (
+  SELECT generate_series(
+           COALESCE(b.debut, (now() AT TIME ZONE 'Europe/Paris')::date),
+           (now() AT TIME ZONE 'Europe/Paris')::date,
+           interval '1 day')::date AS jour
+    FROM bornes b
+), ventes AS (
+  SELECT date_trunc('day', o.created_at AT TIME ZONE 'Europe/Paris')::date AS jour,
+         count(*)::int AS commandes,
+         sum((s.totals->>'current_order_total')::numeric) AS ht
+    FROM "order" o
+    JOIN order_summary s ON s.order_id = o.id AND s.version = o.version AND s.deleted_at IS NULL
+   WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+   GROUP BY 1
+)
+SELECT to_char(j.jour, 'YYYY-MM-DD') AS jour,
+       COALESCE(v.commandes, 0)::int AS commandes,
+       COALESCE(round(v.ht, 2), 0)::float AS ca_ht
+  FROM jours j LEFT JOIN ventes v ON v.jour = j.jour
+ ORDER BY j.jour
+`;
+
 type LigneCommandes = {
   commandes: number;
   ca_ht: number;
@@ -190,24 +251,27 @@ export async function GET() {
   if (cache && Date.now() - cache.at < CACHE_MS) return NextResponse.json(cache.data);
 
   try {
-    const [resultats, origine] = await Promise.all([
+    const [resultats, origine, timeline] = await Promise.all([
       Promise.all(FENETRES.map((j) => fenetre(j))),
       medusaDb().query<{ depuis: Date | null }>(
         `SELECT min(created_at) AS depuis FROM "order"
           WHERE deleted_at IS NULL AND canceled_at IS NULL AND is_draft_order = false`,
       ),
+      medusaDb().query<{ jour: string; commandes: number; ca_ht: number }>(SQL_TIMELINE),
     ]);
     const data: CommerceStatsPayload = {
       fenetres: Object.fromEntries(FENETRES.map((j, i) => [String(j), resultats[i]])),
+      timeline: timeline.rows.map((r: { jour: string; commandes: number; ca_ht: number }) => ({
+        jour: r.jour,
+        caHt: r.ca_ht,
+        commandes: r.commandes,
+      })),
       historiqueDepuis: origine.rows[0]?.depuis ? origine.rows[0].depuis.toISOString() : null,
       generatedAt: new Date().toISOString(),
     };
     cache = { at: Date.now(), data };
     return NextResponse.json(data);
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "erreur inconnue" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: err instanceof Error ? err.message : "erreur inconnue" }, { status: 500 });
   }
 }

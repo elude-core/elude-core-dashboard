@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import type { CommerceStatsPayload, StatsFenetre } from "@/app/api/commerce-stats/route";
+import { CaTimelineChart } from "@/components/elude/CaTimelineChart";
 
 /**
  * Commandes et devis sur 7 / 30 / 60 / 90 jours.
@@ -120,10 +121,7 @@ export function CommerceStatsPanel() {
                     {FENETRES.map((k) => {
                       const s = f(k);
                       return (
-                        <td
-                          key={k}
-                          className={`px-3 py-2 text-right tabular-nums ${l.fort ? "font-medium" : ""}`}
-                        >
+                        <td key={k} className={`px-3 py-2 text-right tabular-nums ${l.fort ? "font-medium" : ""}`}>
                           {s ? l.val(s) : "—"}
                         </td>
                       );
@@ -133,6 +131,15 @@ export function CommerceStatsPanel() {
               </tbody>
             </table>
           </div>
+
+          {/* L'évolution, entre le résumé et la ventilation : on lit d'abord
+              « combien », puis « dans quel sens », puis « par quel canal ». */}
+          {data.timeline && data.timeline.length > 1 && (
+            <div className="mt-5 border-gray-100 border-t pt-4 dark:border-gray-800/60">
+              <p className="mb-2 text-muted-foreground text-xs">CA HT par jour</p>
+              <CaTimelineChart timeline={data.timeline} />
+            </div>
+          )}
 
           {/* Le CA par canal, sur 30 j — assez de volume pour être lisible,
               assez court pour ne pas noyer le tableau. */}
