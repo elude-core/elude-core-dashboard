@@ -1,11 +1,14 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useMemo, useState } from "react";
+
+import { Bar, BarChart, CartesianGrid, Cell, Line, ReferenceArea, XAxis, YAxis } from "recharts";
 
 import type { JourTimeline } from "@/app/api/commerce-stats/route";
+import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/chart";
 
 /**
- * CA HT par jour, avec la moyenne glissante 7 jours.
+ * CA HT par jour — barres, moyenne glissante 7 j, ventilation par canal.
  *
  * ── Pourquoi une moyenne 7 j, et pas seulement des barres ───────────────────
  *
@@ -13,8 +16,8 @@ import type { JourTimeline } from "@/app/api/commerce-stats/route";
  * entre le jour médian (555 € HT) et le meilleur (2 664 € HT). Les barres seules
  * dessinent un peigne où l'œil ne lit aucune tendance — or c'est la tendance
  * qu'on vient chercher. Les barres gardent la vérité brute, la ligne porte le
- * signal. La moyenne est GLISSANTE SUR 7 JOURS exactement pour absorber le
- * cycle hebdomadaire : sans ça, chaque week-end se lirait comme un effondrement.
+ * signal. La fenêtre de 7 jours absorbe le cycle hebdomadaire : sans elle,
+ * chaque week-end se lirait comme un effondrement.
  *
  * ── 🪤 Le dernier point est un jour EN COURS ────────────────────────────────
  *
@@ -23,226 +26,412 @@ import type { JourTimeline } from "@/app/api/commerce-stats/route";
  * SURTOUT exclue de la moyenne glissante — sinon la ligne plongerait sur son
  * dernier segment tous les jours, à chaque ouverture de l'écran.
  *
+ * ── 🪤 La moyenne se calcule sur la série ENTIÈRE, puis on découpe ──────────
+ *
+ * Le sélecteur de fenêtre ne doit pas changer la valeur des points : calculer la
+ * moyenne après découpe amputerait ses 6 premiers jours de leur historique et
+ * ferait bouger la courbe selon le zoom. On calcule sur tout, on tranche après.
+ *
  * ── 🪤 Ne pas utiliser les tokens `--chart-*` ───────────────────────────────
  *
  * Ils sont IDENTIQUES en clair et en sombre dans `globals.css` (`--chart-5` vaut
  * `oklch(0.269 0 0)` dans les deux thèmes) : un graphe bâti dessus serait
- * invisible sur `bg-gray-900`. D'où des classes Tailwind à variante `dark:`,
- * comme le reste du panneau. La palette reste achromatique, c'est le parti pris
- * du dashboard — pas un accent oublié.
+ * invisible sur `bg-gray-900`. On passe donc par `ChartConfig.theme`, que
+ * `ChartStyle` décline en `--color-<clé>` sous `.dark` — le seul mécanisme du
+ * dépôt qui bascule réellement. La palette reste achromatique : c'est le parti
+ * pris du dashboard, et ce sont l'interaction et le mouvement qui portent la
+ * lecture, pas la teinte.
  */
 
-/** Arrondi vers le haut sur un palier lisible, pour que l'axe tombe juste. */
-function maxLisible(v: number): number {
-  if (!(v > 0)) return 1;
-  const ordre = 10 ** Math.floor(Math.log10(v));
-  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) {
-    if (v <= m * ordre) return m * ordre;
-  }
-  return 10 * ordre;
-}
+type Mesure = "caHt" | "commandes" | "panierMoyen";
 
-const euros = (v: number): string => v.toLocaleString("fr-FR", { maximumFractionDigits: 0 });
+const MESURES: Record<Mesure, { label: string; unite: "eur" | "nb"; aide: string }> = {
+  caHt: { label: "CA HT", unite: "eur", aide: "Lignes + port, hors taxe." },
+  commandes: { label: "Commandes", unite: "nb", aide: "Commandes non annulées, hors brouillons." },
+  panierMoyen: { label: "Panier moyen", unite: "eur", aide: "CA du jour ÷ commandes du jour." },
+};
 
-/** `2026-09-03` → Date locale, à midi pour ne dépendre d'aucun fuseau. */
-const versDate = (jour: string): Date => new Date(`${jour}T12:00:00`);
+const FENETRES = [
+  { cle: "7", label: "7 j", jours: 7 },
+  { cle: "30", label: "30 j", jours: 30 },
+  { cle: "60", label: "60 j", jours: 60 },
+  { cle: "90", label: "90 j", jours: 90 },
+  { cle: "tout", label: "Tout", jours: Number.POSITIVE_INFINITY },
+] as const;
 
-const L = 46;
-const R = 6;
-const H = 8;
-const B = 22;
-const W = 720;
-const HAUT = 200;
-const PW = W - L - R;
-const PH = HAUT - H - B;
+/**
+ * Rampe achromatique, du plus foncé au plus clair en thème clair, inversée en
+ * sombre. Huit crans : au-delà, deux canaux voisins deviennent indistinguables —
+ * c'est le survol de la légende qui prend le relais, pas une teinte de plus.
+ */
+const RAMPE: Array<{ light: string; dark: string }> = [
+  { light: "#111827", dark: "#f9fafb" },
+  { light: "#374151", dark: "#d1d5db" },
+  { light: "#4b5563", dark: "#9ca3af" },
+  { light: "#6b7280", dark: "#7d8492" },
+  { light: "#9ca3af", dark: "#6b7280" },
+  { light: "#b6bcc6", dark: "#565e6b" },
+  { light: "#cbd0d8", dark: "#454c58" },
+  { light: "#dfe3e8", dark: "#374151" },
+];
 
-export function CaTimelineChart({ timeline }: { timeline: JourTimeline[] }) {
-  const [survol, setSurvol] = useState<number | null>(null);
-  const hachures = useId();
+const SERIE = { light: "#9ca3af", dark: "#6b7280" };
+// 🪤 Recharts pose `fill` et `fillOpacity` en ATTRIBUTS de présentation sur
+// ReferenceArea : une classe Tailwind `fill-*` ne les remplace pas de façon
+// fiable (mesuré — la bande restait au gris par défaut, ~0,5 d'opacité, et
+// écrasait les barres). On passe donc par `ChartConfig.theme`, qui donne une
+// vraie couleur par thème, et on force `fillOpacity` à 1.
+const WEEKEND = { light: "#f3f4f6", dark: "#1c222c" };
+const AUJOURDHUI = { light: "#e5e7eb", dark: "#2b3240" };
+const MOYENNE = { light: "#111827", dark: "#f9fafb" };
 
-  if (timeline.length === 0) return null;
+/** Clé CSS sûre : les noms de canaux portent espaces et accents. */
+const slug = (nom: string) =>
+  `c${nom
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .toLowerCase()}`;
 
-  const n = timeline.length;
-  const dernier = n - 1;
-  const plafond = maxLisible(Math.max(...timeline.map((d) => d.caHt)));
+/** Identifiant stable du graphe : `ChartContainer` préfixe par `chart-`. */
+const ID_BRUT = "ca-paniers";
+const ID_GRAPHE = `chart-${ID_BRUT}`;
 
-  const slot = PW / n;
-  const largeurBarre = Math.max(1.5, Math.min(15, slot * 0.64));
-  const xCentre = (i: number) => L + slot * (i + 0.5);
-  const y = (v: number) => H + PH * (1 - v / plafond);
+const versDate = (jour: string) => new Date(`${jour}T12:00:00`);
 
-  // 🪤 `null` avant J+6 (pas assez d'historique) ET sur aujourd'hui (jour partiel).
-  const moyenne = timeline.map((_, i) =>
-    i < 6 || i === dernier ? null : timeline.slice(i - 6, i + 1).reduce((s, d) => s + d.caHt, 0) / 7,
-  );
-  const pointsMoyenne = moyenne
-    .map((v, i) => (v === null ? null : `${xCentre(i).toFixed(1)},${y(v).toFixed(1)}`))
-    .filter((p): p is string => p !== null)
-    .join(" ");
+/**
+ * Format COURT, réservé à l'axe Y. Mesuré : « 2 800 € » sur une largeur de 48 px
+ * se coupe en deux lignes et le graphe perd sa ligne de base. L'infobulle, elle,
+ * garde le montant entier — c'est là qu'on lit une valeur précise.
+ */
+const fmtAxe = (v: number, unite: "eur" | "nb") => {
+  if (unite === "nb") return v.toLocaleString("fr-FR");
+  if (Math.abs(v) >= 1000) return `${(v / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} k€`;
+  return `${v.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
+};
 
-  const graduations = [0, plafond / 2, plafond];
-  // L'index ET le jour ensemble : l'infobulle a besoin des deux, et les garder
-  // dans un même objet évite de redémontrer à TypeScript que `survol` n'est
-  // plus `null` à chaque usage.
-  const infobulle = survol !== null && timeline[survol] ? { i: survol, d: timeline[survol] } : null;
+const fmt = (v: number, unite: "eur" | "nb") =>
+  unite === "eur" ? `${v.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €` : v.toLocaleString("fr-FR");
+
+export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]; canaux: string[] }) {
+  const [mesure, setMesure] = useState<Mesure>("caHt");
+  const [fenetre, setFenetre] = useState<string>("tout");
+  const [parCanal, setParCanal] = useState(false);
+  const [canalSurvole, setCanalSurvole] = useState<string | null>(null);
+
+  // La ventilation par canal n'existe que pour du CA : un canal ne porte pas de
+  // « panier moyen » propre, et empiler des comptes de commandes par canal
+  // donnerait un total juste pour une lecture fausse (un client, un canal).
+  const canalPossible = mesure === "caHt";
+  const empile = parCanal && canalPossible;
+
+  const canauxAffiches = useMemo(() => canaux.slice(0, RAMPE.length), [canaux]);
+
+  const complet = useMemo(() => {
+    const base = timeline.map((d) => ({
+      ...d,
+      panierMoyen: d.commandes > 0 ? d.caHt / d.commandes : 0,
+    }));
+    const dernier = base.length - 1;
+    return base.map((d, i) => {
+      const fenetre7 = base.slice(Math.max(0, i - 6), i + 1);
+      const assez = i >= 6 && i !== dernier;
+      const moyenne = assez ? fenetre7.reduce((s, x) => s + x[mesure], 0) / 7 : null;
+      const dt = versDate(d.jour);
+      const jsem = dt.getDay();
+      return {
+        ...d,
+        moyenne,
+        estAujourdhui: i === dernier,
+        estWeekend: jsem === 0 || jsem === 6,
+        ...Object.fromEntries(canauxAffiches.map((c) => [slug(c), d.canaux[c] ?? 0])),
+      };
+    });
+  }, [timeline, mesure, canauxAffiches]);
+
+  const donnees = useMemo(() => {
+    const j = FENETRES.find((f) => f.cle === fenetre)?.jours ?? Number.POSITIVE_INFINITY;
+    return Number.isFinite(j) ? complet.slice(-j) : complet;
+  }, [complet, fenetre]);
+
+  const totaux = useMemo(() => {
+    const ca = donnees.reduce((s, d) => s + d.caHt, 0);
+    const nb = donnees.reduce((s, d) => s + d.commandes, 0);
+    return { caHt: ca, commandes: nb, panierMoyen: nb > 0 ? ca / nb : 0 };
+  }, [donnees]);
+
+  const config = useMemo<ChartConfig>(() => {
+    const c: ChartConfig = {
+      valeur: { label: MESURES[mesure].label, theme: SERIE },
+      moyenne: { label: "Moyenne 7 j", theme: MOYENNE },
+      weekend: { label: "Week-end", theme: WEEKEND },
+      aujourdhui: { label: "Jour en cours", theme: AUJOURDHUI },
+    };
+    canauxAffiches.forEach((nom, i) => {
+      c[slug(nom)] = { label: nom, theme: RAMPE[i] };
+    });
+    return c;
+  }, [mesure, canauxAffiches]);
+
+  // Bandes week-end : par SÉRIES consécutives (samedi→dimanche), pas jour par
+  // jour — sur un axe catégoriel, une ReferenceArea dont x1 vaut x2 ne rend
+  // qu'un trait. Elles expliquent une partie des creux ; sans elles, un samedi
+  // à zéro se lit comme une panne de tunnel.
+  const bandes = useMemo(() => {
+    const runs: Array<[string, string]> = [];
+    let debut: string | null = null;
+    let prec: string | null = null;
+    for (const d of donnees) {
+      if (d.estWeekend) {
+        if (debut === null) debut = d.jour;
+        prec = d.jour;
+      } else if (debut !== null && prec !== null) {
+        runs.push([debut, prec]);
+        debut = null;
+        prec = null;
+      }
+    }
+    if (debut !== null && prec !== null) runs.push([debut, prec]);
+    return runs;
+  }, [donnees]);
+
+  const aujourdhui = donnees.find((d) => d.estAujourdhui)?.jour ?? null;
+  const unite = MESURES[mesure].unite;
+
+  if (timeline.length < 2) return null;
 
   return (
-    <div className="relative">
-      <svg
-        viewBox={`0 0 ${W} ${HAUT}`}
-        className="w-full"
-        role="img"
-        aria-label={`CA HT par jour du ${timeline[0].jour} au ${timeline[dernier].jour}, avec moyenne glissante 7 jours`}
-        onPointerLeave={() => setSurvol(null)}
-      >
-        <defs>
-          <pattern id={hachures} width="4" height="4" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-            <line x1="0" y1="0" x2="0" y2="4" className="stroke-gray-400 dark:stroke-gray-500" strokeWidth="2" />
-          </pattern>
-        </defs>
-
-        {/* Bandes week-end : elles EXPLIQUENT une partie des creux — sans elles,
-            un samedi à zéro se lit comme une panne de tunnel. Toutes les autres
-            barres nulles sont, elles, de vrais jours ouvrés sans commande. */}
-        {timeline.map((d, i) => {
-          const jsem = versDate(d.jour).getDay();
-          if (jsem !== 0 && jsem !== 6) return null;
-          return (
-            <rect
-              key={`we-${d.jour}`}
-              x={L + slot * i}
-              y={H}
-              width={slot}
-              height={PH}
-              className="fill-gray-100/70 dark:fill-gray-800/40"
-            />
-          );
-        })}
-
-        {graduations.map((g) => (
-          <g key={g}>
-            <line
-              x1={L}
-              x2={W - R}
-              y1={y(g)}
-              y2={y(g)}
-              className="stroke-gray-200 dark:stroke-gray-700"
-              strokeWidth="1"
-            />
-            <text
-              x={L - 8}
-              y={y(g) + 3.5}
-              textAnchor="end"
-              className="fill-gray-400 text-[10px] tabular-nums dark:fill-gray-500"
+    // 🪤 `data-chart` porté ICI, en plus du ChartContainer : `ChartStyle` scope
+    // les `--color-<clé>` à `[data-chart=<id>]`, et la légende vit HORS du
+    // conteneur du graphe. Sans cet attribut, ses pastilles sortent
+    // transparentes — mesuré, elles étaient invisibles. D'où aussi l'`id`
+    // explicite passé au ChartContainer, au lieu du `useId()` par défaut.
+    <div data-chart={ID_GRAPHE}>
+      {/* En-tête : les mesures sont des BOUTONS, chacun montrant son total sur
+          la fenêtre courante. Cliquer bascule la série tracée. */}
+      <div className="mb-3 flex flex-wrap items-stretch justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          {(Object.keys(MESURES) as Mesure[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMesure(m)}
+              aria-pressed={mesure === m}
+              title={MESURES[m].aide}
+              className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                mesure === m
+                  ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
+                  : "border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+              }`}
             >
-              {euros(g)}
-            </text>
-          </g>
-        ))}
-
-        {timeline.map((d, i) => {
-          const hauteur = d.caHt > 0 ? Math.max(1.5, PH * (d.caHt / plafond)) : 0;
-          const enCours = i === dernier;
-          return (
-            <rect
-              key={d.jour}
-              x={xCentre(i) - largeurBarre / 2}
-              y={H + PH - hauteur}
-              width={largeurBarre}
-              height={hauteur}
-              rx={largeurBarre > 4 ? 1.5 : 0}
-              fill={enCours ? `url(#${hachures})` : undefined}
-              className={
-                enCours
-                  ? undefined
-                  : survol === i
-                    ? "fill-gray-900 dark:fill-gray-100"
-                    : "fill-gray-300 dark:fill-gray-600"
-              }
-            />
-          );
-        })}
-
-        {pointsMoyenne && (
-          <polyline
-            points={pointsMoyenne}
-            fill="none"
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            className="stroke-gray-900 dark:stroke-gray-100"
-          />
-        )}
-
-        {/* Étiquettes d'axe : le 1er de chaque mois, plus le tout premier jour. */}
-        {timeline.map((d, i) => {
-          const dt = versDate(d.jour);
-          const premierDuMois = dt.getDate() === 1;
-          if (!premierDuMois && i !== 0) return null;
-          if (premierDuMois && i < 4) return null;
-          return (
-            <text
-              key={`x-${d.jour}`}
-              x={xCentre(i)}
-              y={HAUT - 7}
-              textAnchor={i === 0 ? "start" : "middle"}
-              className="fill-gray-400 text-[10px] dark:fill-gray-500"
-            >
-              {dt.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
-            </text>
-          );
-        })}
-
-        {/* Zones de survol pleine hauteur : viser une barre de 4 px est impossible. */}
-        {timeline.map((d, i) => (
-          <rect
-            key={`h-${d.jour}`}
-            x={L + slot * i}
-            y={H}
-            width={slot}
-            height={PH}
-            fill="transparent"
-            onPointerEnter={() => setSurvol(i)}
-          />
-        ))}
-      </svg>
-
-      {infobulle && (
-        <div
-          className="pointer-events-none absolute -translate-x-1/2 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs shadow-sm dark:border-gray-700 dark:bg-gray-800"
-          style={{
-            left: `${Math.min(88, Math.max(12, (xCentre(infobulle.i) / W) * 100))}%`,
-            bottom: "calc(100% - 12px)",
-          }}
-        >
-          <div className="whitespace-nowrap font-medium">
-            {versDate(infobulle.d.jour).toLocaleDateString("fr-FR", {
-              weekday: "short",
-              day: "numeric",
-              month: "short",
-            })}
-            {infobulle.i === dernier && <span className="ml-1 text-muted-foreground">· en cours</span>}
-          </div>
-          <div className="whitespace-nowrap tabular-nums">
-            {euros(infobulle.d.caHt)} € HT
-            <span className="ml-1.5 text-muted-foreground">
-              {infobulle.d.commandes} cmd{infobulle.d.commandes > 1 ? "s" : ""}
-            </span>
-          </div>
+              <span className="block text-[11px] opacity-70">{MESURES[m].label}</span>
+              <span className="block font-medium text-sm tabular-nums">
+                {fmt(Math.round(totaux[m]), MESURES[m].unite)}
+              </span>
+            </button>
+          ))}
         </div>
-      )}
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground text-xs">
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2 rounded-[1px] bg-gray-300 dark:bg-gray-600" />
-          CA du jour
-        </span>
+        <div className="flex flex-wrap items-center gap-1.5 self-end">
+          {FENETRES.map((f) => (
+            <button
+              key={f.cle}
+              type="button"
+              onClick={() => setFenetre(f.cle)}
+              aria-pressed={fenetre === f.cle}
+              className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                fenetre === f.cle
+                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                  : "text-muted-foreground hover:bg-gray-100 dark:hover:bg-gray-800"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setParCanal((v) => !v)}
+            disabled={!canalPossible}
+            aria-pressed={empile}
+            title={canalPossible ? "Empiler le CA par canal" : "La ventilation par canal n'existe que pour le CA"}
+            className={`ml-1 rounded-md border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              empile
+                ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
+                : "border-gray-200 text-muted-foreground hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+            }`}
+          >
+            Par canal
+          </button>
+        </div>
+      </div>
+
+      <ChartContainer id={ID_BRUT} config={config} className="aspect-auto h-[260px] w-full">
+        <BarChart data={donnees} margin={{ left: 4, right: 4, top: 4 }}>
+          <CartesianGrid vertical={false} strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-800" />
+
+          {bandes.map(([x1, x2]) => (
+            <ReferenceArea
+              key={`we-${x1}`}
+              x1={x1}
+              x2={x2}
+              fill="var(--color-weekend)"
+              fillOpacity={1}
+              stroke="none"
+              ifOverflow="visible"
+            />
+          ))}
+          {aujourdhui && (
+            <ReferenceArea
+              x1={aujourdhui}
+              x2={aujourdhui}
+              fill="var(--color-aujourdhui)"
+              fillOpacity={1}
+              stroke="var(--color-valeur)"
+              strokeDasharray="3 3"
+              ifOverflow="visible"
+            />
+          )}
+
+          <XAxis
+            dataKey="jour"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            minTickGap={28}
+            tickFormatter={(v: string) => versDate(v).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+            className="text-[11px]"
+          />
+          <YAxis
+            tickLine={false}
+            axisLine={false}
+            width={56}
+            tickFormatter={(v: number) => fmtAxe(v, unite)}
+            className="text-[11px] tabular-nums"
+          />
+
+          <ChartTooltip
+            cursor={{ className: "fill-gray-500/10" }}
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null;
+              const d = payload[0].payload as (typeof donnees)[number];
+              const ventil = canauxAffiches
+                .map((nom) => ({ nom, ht: d.canaux[nom] ?? 0 }))
+                .filter((x) => x.ht > 0)
+                .sort((a, b) => b.ht - a.ht);
+              return (
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs shadow-md dark:border-gray-700 dark:bg-gray-900">
+                  <div className="font-medium">
+                    {versDate(d.jour).toLocaleDateString("fr-FR", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "long",
+                    })}
+                    {d.estAujourdhui && <span className="ml-1.5 text-muted-foreground">· en cours</span>}
+                  </div>
+                  <div className="mt-1 tabular-nums">
+                    <span className="font-medium">{fmt(Math.round(d[mesure]), unite)}</span>
+                    {mesure !== "commandes" && (
+                      <span className="ml-1.5 text-muted-foreground">
+                        {d.commandes} cmd{d.commandes > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  {d.moyenne !== null && (
+                    <div className="text-muted-foreground tabular-nums">
+                      moyenne 7 j : {fmt(Math.round(d.moyenne), unite)}
+                    </div>
+                  )}
+                  {empile && ventil.length > 0 && (
+                    <div className="mt-1.5 space-y-0.5 border-gray-100 border-t pt-1.5 dark:border-gray-800">
+                      {ventil.map((x) => (
+                        <div key={x.nom} className="flex items-center gap-2">
+                          <span
+                            className="inline-block size-2 shrink-0 rounded-[2px]"
+                            style={{ background: `var(--color-${slug(x.nom)})` }}
+                          />
+                          <span className="flex-1 whitespace-nowrap">{x.nom}</span>
+                          <span className="tabular-nums">{fmt(Math.round(x.ht), "eur")}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }}
+          />
+
+          {empile ? (
+            canauxAffiches.map((nom) => (
+              <Bar
+                key={nom}
+                dataKey={slug(nom)}
+                stackId="canal"
+                fill={`var(--color-${slug(nom)})`}
+                // Le survol de la légende ISOLE un canal : c'est lui qui remplace
+                // la couleur, faute de teintes disponibles dans ce thème.
+                fillOpacity={canalSurvole === null || canalSurvole === nom ? 1 : 0.18}
+                radius={0}
+                isAnimationActive
+              />
+            ))
+          ) : (
+            <Bar dataKey={mesure} radius={[2, 2, 0, 0]} isAnimationActive>
+              {donnees.map((d) => (
+                <Cell
+                  key={d.jour}
+                  fill={d.estAujourdhui ? "var(--color-moyenne)" : "var(--color-valeur)"}
+                  fillOpacity={d.estAujourdhui ? 0.35 : 1}
+                />
+              ))}
+            </Bar>
+          )}
+
+          <Line
+            dataKey="moyenne"
+            type="monotone"
+            stroke="var(--color-moyenne)"
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 3 }}
+            connectNulls={false}
+            isAnimationActive
+          />
+        </BarChart>
+      </ChartContainer>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-muted-foreground text-xs">
+        {empile ? (
+          canauxAffiches.map((nom) => (
+            <button
+              key={nom}
+              type="button"
+              onMouseEnter={() => setCanalSurvole(nom)}
+              onMouseLeave={() => setCanalSurvole(null)}
+              onFocus={() => setCanalSurvole(nom)}
+              onBlur={() => setCanalSurvole(null)}
+              className={`flex items-center gap-1.5 rounded transition-opacity ${
+                canalSurvole && canalSurvole !== nom ? "opacity-40" : ""
+              }`}
+            >
+              <span
+                className="inline-block size-2.5 rounded-[2px]"
+                style={{ background: `var(--color-${slug(nom)})` }}
+              />
+              {nom}
+            </button>
+          ))
+        ) : (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2 rounded-[1px] bg-gray-400 dark:bg-gray-500" />
+            {MESURES[mesure].label} du jour
+          </span>
+        )}
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-0.5 w-4 bg-gray-900 dark:bg-gray-100" />
           moyenne 7 j
         </span>
         <span>bandes grisées : week-ends</span>
-        <span>dernière barre : jour en cours, hors moyenne</span>
+        <span>dernier jour : en cours, hors moyenne</span>
       </div>
     </div>
   );

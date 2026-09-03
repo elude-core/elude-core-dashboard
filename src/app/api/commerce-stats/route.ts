@@ -101,6 +101,12 @@ export interface JourTimeline {
   jour: string;
   caHt: number;
   commandes: number;
+  /**
+   * CA HT du jour ventilé par canal. Un canal sans vente ce jour-là est ABSENT
+   * de l'objet — le graphe empilé doit donc lire `canaux[nom] ?? 0`, jamais
+   * supposer que toutes les clés existent.
+   */
+  canaux: Record<string, number>;
 }
 
 export interface CommerceStatsPayload {
@@ -116,6 +122,12 @@ export interface CommerceStatsPayload {
    * ça interdit de valider un total contre l'autre.
    */
   timeline: JourTimeline[];
+  /**
+   * Les canaux présents dans la timeline, du plus gros CA au plus petit. Sert à
+   * ordonner l'empilement ET la rampe de gris du graphe : sans ordre stable,
+   * les couches changeraient de place à chaque rafraîchissement.
+   */
+  canaux: string[];
   /**
    * Date de la plus ancienne commande. ⚠️ Nécessaire pour lire les fenêtres
    * sans contresens : mesuré le 03/09, l'historique commence au 14/07, donc
@@ -247,11 +259,24 @@ WITH bornes AS (
     FROM "order" o
    WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
    GROUP BY 1
+), par_canal AS (
+  SELECT date_trunc('day', o.created_at AT TIME ZONE 'Europe/Paris')::date AS jour,
+         sc.name AS canal,
+         round(sum(${HT_COMMANDE}), 2) AS ht
+    FROM "order" o
+    JOIN sales_channel sc ON sc.id = o.sales_channel_id
+   WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+   GROUP BY 1, 2
+), canaux_du_jour AS (
+  SELECT jour, jsonb_object_agg(canal, ht) AS canaux FROM par_canal GROUP BY jour
 )
 SELECT to_char(j.jour, 'YYYY-MM-DD') AS jour,
        COALESCE(v.commandes, 0)::int AS commandes,
-       COALESCE(round(v.ht, 2), 0)::float AS ca_ht
-  FROM jours j LEFT JOIN ventes v ON v.jour = j.jour
+       COALESCE(round(v.ht, 2), 0)::float AS ca_ht,
+       COALESCE(c.canaux, '{}'::jsonb) AS canaux
+  FROM jours j
+  LEFT JOIN ventes v ON v.jour = j.jour
+  LEFT JOIN canaux_du_jour c ON c.jour = j.jour
  ORDER BY j.jour
 `;
 
@@ -266,6 +291,13 @@ type LigneCommandes = {
 };
 type LigneDevis = { devis: number; moyen: number | null; median: number | null };
 type LigneCanal = { canal: string; commandes: number; ca_ht: number };
+type LigneTimeline = {
+  jour: string;
+  commandes: number;
+  ca_ht: number;
+  /** `jsonb` rendu par node-postgres en objet déjà désérialisé. */
+  canaux: Record<string, number> | null;
+};
 
 async function fenetre(jours: number): Promise<StatsFenetre> {
   const db = medusaDb();
@@ -307,15 +339,30 @@ export async function GET() {
         `SELECT min(created_at) AS depuis FROM "order"
           WHERE deleted_at IS NULL AND canceled_at IS NULL AND is_draft_order = false`,
       ),
-      medusaDb().query<{ jour: string; commandes: number; ca_ht: number }>(SQL_TIMELINE),
+      medusaDb().query<LigneTimeline>(SQL_TIMELINE),
     ]);
+
+    const jours = timeline.rows.map((r: LigneTimeline) => ({
+      jour: r.jour,
+      caHt: r.ca_ht,
+      commandes: r.commandes,
+      canaux: r.canaux ?? {},
+    }));
+
+    // Ordre stable des canaux : par CA décroissant sur TOUTE la timeline, pas
+    // par ordre d'apparition — sinon un canal qui vend tard passerait devant.
+    const totauxCanal = new Map<string, number>();
+    for (const j of jours) {
+      for (const [canal, ht] of Object.entries(j.canaux)) {
+        totauxCanal.set(canal, (totauxCanal.get(canal) ?? 0) + ht);
+      }
+    }
+    const canaux = [...totauxCanal.entries()].sort((a, b) => b[1] - a[1]).map(([nom]) => nom);
+
     const data: CommerceStatsPayload = {
       fenetres: Object.fromEntries(FENETRES.map((j, i) => [String(j), resultats[i]])),
-      timeline: timeline.rows.map((r: { jour: string; commandes: number; ca_ht: number }) => ({
-        jour: r.jour,
-        caHt: r.ca_ht,
-        commandes: r.commandes,
-      })),
+      timeline: jours,
+      canaux,
       historiqueDepuis: origine.rows[0]?.depuis ? origine.rows[0].depuis.toISOString() : null,
       generatedAt: new Date().toISOString(),
     };
