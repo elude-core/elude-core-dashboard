@@ -16,25 +16,56 @@ export const dynamic = "force-dynamic";
  * donne 2 332 € sans filtre de version, 1 166 € avec, 1 399 € en ajoutant la
  * TVA. Trois calculs, trois réponses, aucune juste.
  *
- * Le seul chiffre fiable est `order_summary.totals->>'current_order_total'` —
- * celui que Medusa utilise elle-même. Il est **HT** (confirmé par Lucas).
+ * ── 🪤 `current_order_total` est TTC. Ne PAS s'en servir pour du CA ─────────
  *
- * ⚠️ Et `order_summary` est VERSIONNÉE elle aussi : sans `s.version = o.version`
- * la jointure multiplie les lignes. Mesuré : 159 commandes annoncées sur 30 j
- * au lieu de 59, et un CA gonflé d'autant — une erreur qui va dans le sens qui
- * plaît, donc qu'on ne cherche pas. C'est la TROISIÈME fois que le versionnage
- * de cette table piège un calcul ; le réflexe est de filtrer la version sur
+ * Ce commentaire a porté « le seul chiffre fiable… il est **HT** (confirmé par
+ * Lucas) » pendant une journée, et c'était faux : le panneau a affiché un CA
+ * surévalué de 20 % sous une étiquette « HT ». Une parole rapportée n'est pas
+ * une mesure, et je l'avais gravée comme un fait.
+ *
+ * Mesuré le 03/09 sur les 77 commandes : le ratio `current_order_total ÷ somme
+ * des lignes` vaut **exactement 1,2000 sur 31 commandes** (celles sans port) et
+ * davantage sur les autres, port taxé compris. `order_line_item_tax_line` ne
+ * connaît qu'un seul taux, 20 %, sur 108 lignes, et n'en stocke QUE le taux —
+ * aucun montant. Les 14 clés de `totals` valent toutes le même montant TTC.
+ *
+ * ── Le CA est donc recalculé : lignes + port, hors taxe ─────────────────────
+ *
+ * Contrairement à ce que disait ce fichier, la somme des lignes EST fiable dès
+ * lors qu'on filtre la version des deux côtés (`order_item.version`), et c'est
+ * la seule base hors taxe disponible. Les devis se lisent déjà ainsi
+ * (`cart_line_item.is_tax_inclusive = false` sur toutes les lignes), donc le
+ * panneau devient homogène — avant, il mélangeait commandes TTC et devis HT.
+ *
+ * 🪤 **Ne jamais retomber sur `TTC ÷ 1,2`.** Deux commandes sur 77 (1081, 1006)
+ * portent un taux implicite de **0 %** — exonérées, `current_order_total` y vaut
+ * déjà le HT. Diviser les sous-évaluerait de 20 %. La division donne 23 667 €
+ * contre 23 756 € en sommant, l'écart atteignant 59,67 € sur une seule commande.
+ * Et l'écart ne vient PAS de remises : `order_line_item_adjustment` est vide.
+ *
+ * ⚠️ `order_item` et `order_shipping` sont VERSIONNÉES, comme l'était
+ * `order_summary` : sans `version = o.version` la jointure multiplie les lignes.
+ * Le piège a déjà coûté 159 commandes annoncées sur 30 j au lieu de 59, sur
+ * `order_summary` — table dont ce fichier n'a plus besoin. Le réflexe vaut pour
  * CHAQUE jointure partant d'`order`.
+ *
+ * ⚠️ Ces quatre tables ne sont lisibles que depuis le `GRANT SELECT` posé le
+ * 03/09 : `dashboard_ro` est une liste blanche (12 tables), et une table hors
+ * liste sort la route en 500 **en production seulement**.
  *
  * Un devis, lui, n'a pas de total propre : il pointe un panier. Son montant se
  * lit sur `cart_line_item`, comme l'écran /paniers le fait déjà.
  *
  * ── Pourquoi moyenne ET médiane, jamais l'une seule ─────────────────────────
  *
- * Les volumes sont petits : 19 commandes sur 7 j, 77 sur 90 j. Une vente à
- * 4 089 € déplace la moyenne de plus de 200 €. Mesuré sur les devis à 90 j :
- * moyenne 1 414,84 €, médiane 210,95 € — la moyenne vaut SEPT FOIS la médiane.
+ * Les volumes sont petits : 19 commandes sur 7 j, 77 sur 90 j. Mesuré le 03/09
+ * sur les devis à 90 j : moyenne 1 414,84 €, médiane 210,95 € — la moyenne vaut
+ * SEPT FOIS la médiane, parce que deux devis (19 990 € et 5 349 €) portent tout.
  * Seule, elle ferait croire à un panier B2B de 1 400 €.
+ *
+ * Côté commandes le même écart existe, en plus discret : 309 € de moyenne pour
+ * 150 € de médiane sur 90 j, et les TROIS plus grosses commandes pèsent
+ * 3 893 € sur 23 756 €.
  *
  * L'écart entre les deux est donc l'information, pas un détail de présentation.
  * `concentrationTop3` la complète : quelle part du CA tient à trois commandes.
@@ -100,6 +131,28 @@ const CACHE_MS = 60_000;
 let cache: { at: number; data: CommerceStatsPayload } | null = null;
 
 /**
+ * Montant HORS TAXE d'une commande : lignes + port. Les deux sous-requêtes
+ * filtrent `version` en plus de `order_id` — sans quoi une commande modifiée
+ * compte ses lignes plusieurs fois.
+ *
+ * ⚠️ Fragment interpolé : la requête hôte DOIT exposer `"order"` sous l'alias
+ * `o`, et ne doit pas déjà utiliser les alias `oi`, `li`, `os`, `sm`.
+ *
+ * Total mesuré le 03/09 sur les 77 commandes : 23 755,63 € HT, contre
+ * 28 400,96 € TTC lus dans `order_summary`.
+ */
+const HT_COMMANDE = `(
+    COALESCE((SELECT sum(li.unit_price * oi.quantity)
+                FROM order_item oi
+                JOIN order_line_item li ON li.id = oi.item_id AND li.deleted_at IS NULL
+               WHERE oi.order_id = o.id AND oi.version = o.version AND oi.deleted_at IS NULL), 0)
+  + COALESCE((SELECT sum(sm.amount)
+                FROM order_shipping os
+                JOIN order_shipping_method sm ON sm.id = os.shipping_method_id AND sm.deleted_at IS NULL
+               WHERE os.order_id = o.id AND os.version = o.version AND os.deleted_at IS NULL), 0)
+  )`;
+
+/**
  * 🪤 `is_draft_order = false` ET `canceled_at IS NULL` : un brouillon n'est pas
  * une vente, une annulation non plus. Sans ces deux filtres le CA est faux vers
  * le haut, et c'est le genre d'erreur qu'on ne voit jamais parce qu'elle va
@@ -116,8 +169,8 @@ SELECT
   COALESCE(round(sum(t.ht) FILTER (WHERE t.rang <= 3), 2), 0)::float AS ca_top3
 FROM (
   SELECT
-    (s.totals->>'current_order_total')::numeric AS ht,
-    row_number() OVER (ORDER BY (s.totals->>'current_order_total')::numeric DESC) AS rang,
+    ${HT_COMMANDE} AS ht,
+    row_number() OVER (ORDER BY ${HT_COMMANDE} DESC) AS rang,
     -- 🪤 Par E-MAIL, pas par customer_id : un compte semble créé à chaque
     -- passage (59 commandes, 59 customer_id, 56 e-mails distincts sur 30 j).
     -- Compter par compte donnait 2 récurrents, par e-mail 3 — une personne
@@ -131,7 +184,6 @@ FROM (
          AND o2.created_at < o.created_at
     ) AS deja_client
   FROM "order" o
-  JOIN order_summary s ON s.order_id = o.id AND s.version = o.version AND s.deleted_at IS NULL
   WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
     AND o.created_at >= now() - make_interval(days => $1)
 ) t
@@ -154,9 +206,8 @@ FROM (
 
 const SQL_CANAL = `
 SELECT sc.name AS canal, count(*)::int AS commandes,
-       COALESCE(round(sum((s.totals->>'current_order_total')::numeric), 2), 0)::float AS ca_ht
+       COALESCE(round(sum(${HT_COMMANDE}), 2), 0)::float AS ca_ht
   FROM "order" o
-  JOIN order_summary s ON s.order_id = o.id AND s.version = o.version AND s.deleted_at IS NULL
   JOIN sales_channel sc ON sc.id = o.sales_channel_id
  WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
    AND o.created_at >= now() - make_interval(days => $1)
@@ -192,9 +243,8 @@ WITH bornes AS (
 ), ventes AS (
   SELECT date_trunc('day', o.created_at AT TIME ZONE 'Europe/Paris')::date AS jour,
          count(*)::int AS commandes,
-         sum((s.totals->>'current_order_total')::numeric) AS ht
+         sum(${HT_COMMANDE}) AS ht
     FROM "order" o
-    JOIN order_summary s ON s.order_id = o.id AND s.version = o.version AND s.deleted_at IS NULL
    WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
    GROUP BY 1
 )
