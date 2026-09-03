@@ -58,6 +58,28 @@ export function exclureE2e(alias = "c"): string {
 }
 
 /**
+ * Robots, reconnus au user-agent par le storefront (storefront#1189).
+ *
+ * Même raison que l'e2e : un robot qui ouvre un panier fausse tous les taux, en
+ * gonflant un dénominateur qui n'achètera jamais. Jusqu'ici rien ne les
+ * écartait — faute de savoir les reconnaître. Le cas mesuré : ~92 paniers
+ * naissent chaque jour entre 06h14 et 06h59, 0 identifié, 0 commande.
+ *
+ * 🪤 Ne remplace PAS `exclureE2e` : Playwright se tague lui-même (`e2e`), un
+ * robot tiers est détecté au user-agent (`device_bot`). Deux populations, deux
+ * clés, et un panier peut ne porter ni l'une ni l'autre.
+ *
+ * ⚠️ La clé n'existe que depuis le 07/09 : un panier antérieur n'est pas
+ * « non-robot », il est **non mesuré**. Cette exclusion ne nettoie donc pas
+ * l'historique, elle arrête d'en fabriquer.
+ *
+ * `alias` est celui de la table `cart` dans la requête appelante.
+ */
+export function exclureRobots(alias = "c"): string {
+  return `(${alias}.metadata IS NULL OR ${alias}.metadata->>'device_bot' IS NULL)`;
+}
+
+/**
  * Pendant JavaScript des fragments SQL, pour les routes qui lisent l'API admin
  * Medusa plutôt que la base (l'écran TV).
  *
