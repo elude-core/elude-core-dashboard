@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import type { CommerceStatsPayload, StatsFenetre } from "@/app/api/commerce-stats/route";
+import type { CommerceStatsPayload, Comparaison, StatsFenetre } from "@/app/api/commerce-stats/route";
 import { CaTimelineChart } from "@/components/elude/CaTimelineChart";
 
 /**
@@ -31,10 +31,43 @@ const FENETRES = ["7", "30", "60", "90"] as const;
 const eur = (v: number | null): string =>
   v === null ? "—" : v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
+/**
+ * Évolution vs la période précédente de même durée.
+ *
+ * ── 🪤 Deux cas où l'on doit se TAIRE, pas afficher un chiffre prudent ──────
+ *
+ * 1. `p.fiable` faux : l'historique ne couvre pas toute la période précédente.
+ *    Mesuré le 04/09, la fenêtre 30 j se compare à 22 jours de données sur 30 —
+ *    la « croissance » affichée serait pour l'essentiel le trou de départ.
+ * 2. Base à zéro : passer de 0 à 3 n'est pas « +∞ % », c'est un démarrage. On
+ *    affiche « nouveau » plutôt qu'un pourcentage qui n'existe pas.
+ *
+ * Dans les deux cas, `null` — l'appelant n'affiche rien du tout.
+ */
+function evolution(
+  actuel: number,
+  avant: number,
+  p: Comparaison,
+): { texte: string; signe: number; avant: number } | null {
+  if (!p.fiable) return null;
+  if (avant === 0) return actuel > 0 ? { texte: "nouveau", signe: 1, avant } : null;
+  const pct = ((actuel - avant) / avant) * 100;
+  if (Math.abs(pct) < 0.5) return { texte: "=", signe: 0, avant };
+  const arrondi = Math.round(pct);
+  return { texte: `${arrondi > 0 ? "+" : ""}${arrondi.toLocaleString("fr-FR")} %`, signe: Math.sign(pct), avant };
+}
+
 const eurPrecis = (v: number | null): string =>
   v === null ? "—" : v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function CommerceStatsPanel() {
+export function CommerceStatsPanel({
+  onJourClick,
+  jourActif,
+}: {
+  /** Relayé au graphe : clic sur une barre pour filtrer la liste en dessous. */
+  onJourClick?: (jour: string) => void;
+  jourActif?: string | null;
+} = {}) {
   const [data, setData] = useState<CommerceStatsPayload | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -62,10 +95,25 @@ export function CommerceStatsPanel() {
   }, []);
 
   const f = (k: string): StatsFenetre | null => data?.fenetres?.[k] ?? null;
+  const c = (k: string): Comparaison | null => data?.comparaisons?.[k] ?? null;
 
-  const lignes: Array<{ label: string; aide?: string; val: (s: StatsFenetre) => string; fort?: boolean }> = [
-    { label: "Commandes", val: (s) => String(s.commandes), fort: true },
-    { label: "CA HT", val: (s) => `${eur(s.caHt)} €`, fort: true },
+  const lignes: Array<{
+    label: string;
+    aide?: string;
+    val: (s: StatsFenetre) => string;
+    fort?: boolean;
+    /** Valeur comparable à la période précédente, quand elle a un sens. */
+    brut?: (s: StatsFenetre) => number;
+    avant?: (p: Comparaison) => number;
+  }> = [
+    {
+      label: "Commandes",
+      val: (s) => String(s.commandes),
+      fort: true,
+      brut: (s) => s.commandes,
+      avant: (p) => p.commandes,
+    },
+    { label: "CA HT", val: (s) => `${eur(s.caHt)} €`, fort: true, brut: (s) => s.caHt, avant: (p) => p.caHt },
     { label: "Panier moyen HT", val: (s) => `${eurPrecis(s.panierMoyenHt)} €` },
     {
       label: "Panier médian HT",
@@ -82,7 +130,7 @@ export function CommerceStatsPanel() {
       aide: "Commandes d'un e-mail ayant déjà commandé avant. Compté par e-mail : un compte est créé à chaque passage.",
       val: (s) => `${s.clientsRecurrents} / ${s.commandes}`,
     },
-    { label: "Devis", val: (s) => String(s.devis), fort: true },
+    { label: "Devis", val: (s) => String(s.devis), fort: true, brut: (s) => s.devis, avant: (p) => p.devis },
     { label: "Devis moyen HT", val: (s) => `${eurPrecis(s.devisMoyenHt)} €` },
     { label: "Devis médian HT", val: (s) => `${eurPrecis(s.devisMedianHt)} €` },
   ];
@@ -120,9 +168,25 @@ export function CommerceStatsPanel() {
                     </td>
                     {FENETRES.map((k) => {
                       const s = f(k);
+                      const p = c(k);
+                      const ev = s && p && l.brut && l.avant ? evolution(l.brut(s), l.avant(p), p) : null;
                       return (
                         <td key={k} className={`px-3 py-2 text-right tabular-nums ${l.fort ? "font-medium" : ""}`}>
                           {s ? l.val(s) : "—"}
+                          {ev && (
+                            <span
+                              className={`ml-2 font-normal text-[11px] ${
+                                ev.signe > 0
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : ev.signe < 0
+                                    ? "text-red-600 dark:text-red-400"
+                                    : "text-muted-foreground"
+                              }`}
+                              title={`Période précédente : ${ev.avant.toLocaleString("fr-FR", { maximumFractionDigits: 0 })}`}
+                            >
+                              {ev.texte}
+                            </span>
+                          )}
                         </td>
                       );
                     })}
@@ -138,7 +202,12 @@ export function CommerceStatsPanel() {
             <div className="mt-5 border-gray-100 border-t pt-4 dark:border-gray-800/60">
               {/* Pas de titre ici : le graphe porte ses propres boutons de mesure,
                   qui disent déjà ce qui est tracé. */}
-              <CaTimelineChart timeline={data.timeline} canaux={data.canaux ?? []} />
+              <CaTimelineChart
+                timeline={data.timeline}
+                canaux={data.canaux ?? []}
+                onJourClick={onJourClick}
+                jourActif={jourActif}
+              />
             </div>
           )}
 

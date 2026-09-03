@@ -107,10 +107,45 @@ export interface JourTimeline {
    * supposer que toutes les clés existent.
    */
   canaux: Record<string, number>;
+  /**
+   * Devis créés ce jour-là. Le NOMBRE est tracé, pas le montant : mesuré le
+   * 04/09, la médiane journalière est de 379 € et le maximum de 19 990 € — un
+   * rapport de 53 qui, sur l'axe du CA, écraserait toutes les barres. Le
+   * montant reste dans l'infobulle, là où on lit une valeur précise.
+   */
+  devis: number;
+  devisHt: number;
+}
+
+/**
+ * La période PRÉCÉDENTE de même durée, pour situer un chiffre.
+ *
+ * ── 🪤 Une base tronquée fabrique de la croissance ──────────────────────────
+ *
+ * L'historique commence le 14/07/2026. Au 04/09, la période précédente de la
+ * fenêtre 30 j court du 06/07 au 05/08 : l'historique n'en couvre que 22 jours
+ * sur 30. Comparer sans le dire afficherait une hausse spectaculaire dont la
+ * seule cause est l'absence de données au début — exactement le genre d'erreur
+ * qui va dans le sens qui plaît, donc qu'on ne cherche pas.
+ *
+ * `joursCouverts` mesure ce recouvrement, `fiable` tranche. L'affichage doit
+ * TAIRE l'évolution quand `fiable` est faux, pas l'assortir d'un astérisque.
+ */
+export interface Comparaison {
+  caHt: number;
+  commandes: number;
+  devis: number;
+  /** Jours de la période précédente réellement couverts par l'historique. */
+  joursCouverts: number;
+  /** Durée nominale de la période, en jours. */
+  joursAttendus: number;
+  fiable: boolean;
 }
 
 export interface CommerceStatsPayload {
   fenetres: Record<string, StatsFenetre>;
+  /** Période précédente, par fenêtre. Voir `Comparaison` avant de l'afficher. */
+  comparaisons: Record<string, Comparaison>;
   /**
    * CA par jour calendaire, du premier jour d'historique (ou J-89) à aujourd'hui,
    * SANS trou : les jours sans vente valent 0 et sont présents.
@@ -198,6 +233,7 @@ FROM (
   FROM "order" o
   WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
     AND o.created_at >= now() - make_interval(days => $1)
+    AND o.created_at <  now() - make_interval(days => $2)
 ) t
 `;
 
@@ -212,7 +248,9 @@ FROM (
       FROM cart_line_item li WHERE li.cart_id = q.cart_id AND li.deleted_at IS NULL
   ) AS ht
   FROM quote q
-  WHERE q.deleted_at IS NULL AND q.created_at >= now() - make_interval(days => $1)
+  WHERE q.deleted_at IS NULL
+    AND q.created_at >= now() - make_interval(days => $1)
+    AND q.created_at <  now() - make_interval(days => $2)
 ) t
 `;
 
@@ -223,6 +261,7 @@ SELECT sc.name AS canal, count(*)::int AS commandes,
   JOIN sales_channel sc ON sc.id = o.sales_channel_id
  WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
    AND o.created_at >= now() - make_interval(days => $1)
+   AND o.created_at <  now() - make_interval(days => $2)
  GROUP BY sc.name ORDER BY ca_ht DESC
 `;
 
@@ -269,14 +308,26 @@ WITH bornes AS (
    GROUP BY 1, 2
 ), canaux_du_jour AS (
   SELECT jour, jsonb_object_agg(canal, ht) AS canaux FROM par_canal GROUP BY jour
+), devis_du_jour AS (
+  SELECT date_trunc('day', q.created_at AT TIME ZONE 'Europe/Paris')::date AS jour,
+         count(*)::int AS n,
+         round(sum((SELECT COALESCE(sum(li.unit_price * li.quantity), 0)
+                      FROM cart_line_item li
+                     WHERE li.cart_id = q.cart_id AND li.deleted_at IS NULL)), 2) AS ht
+    FROM quote q
+   WHERE q.deleted_at IS NULL
+   GROUP BY 1
 )
 SELECT to_char(j.jour, 'YYYY-MM-DD') AS jour,
        COALESCE(v.commandes, 0)::int AS commandes,
        COALESCE(round(v.ht, 2), 0)::float AS ca_ht,
-       COALESCE(c.canaux, '{}'::jsonb) AS canaux
+       COALESCE(c.canaux, '{}'::jsonb) AS canaux,
+       COALESCE(d.n, 0)::int AS devis,
+       COALESCE(d.ht, 0)::float AS devis_ht
   FROM jours j
   LEFT JOIN ventes v ON v.jour = j.jour
   LEFT JOIN canaux_du_jour c ON c.jour = j.jour
+  LEFT JOIN devis_du_jour d ON d.jour = j.jour
  ORDER BY j.jour
 `;
 
@@ -297,14 +348,20 @@ type LigneTimeline = {
   ca_ht: number;
   /** `jsonb` rendu par node-postgres en objet déjà désérialisé. */
   canaux: Record<string, number> | null;
+  devis: number;
+  devis_ht: number;
 };
 
-async function fenetre(jours: number): Promise<StatsFenetre> {
+/**
+ * Une fenêtre glissante `[maintenant - debut ; maintenant - fin[`. `fin = 0`
+ * donne la période courante ; `debut = 2n, fin = n` donne la précédente.
+ */
+async function fenetre(debut: number, fin = 0): Promise<StatsFenetre> {
   const db = medusaDb();
   const [cmd, dev, canaux] = await Promise.all([
-    db.query<LigneCommandes>(SQL_COMMANDES, [jours]),
-    db.query<LigneDevis>(SQL_DEVIS, [jours]),
-    db.query<LigneCanal>(SQL_CANAL, [jours]),
+    db.query<LigneCommandes>(SQL_COMMANDES, [debut, fin]),
+    db.query<LigneDevis>(SQL_DEVIS, [debut, fin]),
+    db.query<LigneCanal>(SQL_CANAL, [debut, fin]),
   ]);
   const c = cmd.rows[0];
   const d = dev.rows[0];
@@ -333,8 +390,10 @@ export async function GET() {
   if (cache && Date.now() - cache.at < CACHE_MS) return NextResponse.json(cache.data);
 
   try {
-    const [resultats, origine, timeline] = await Promise.all([
+    const [resultats, precedents, origine, timeline] = await Promise.all([
       Promise.all(FENETRES.map((j) => fenetre(j))),
+      // Période précédente : [maintenant - 2n ; maintenant - n[
+      Promise.all(FENETRES.map((j) => fenetre(j * 2, j))),
       medusaDb().query<{ depuis: Date | null }>(
         `SELECT min(created_at) AS depuis FROM "order"
           WHERE deleted_at IS NULL AND canceled_at IS NULL AND is_draft_order = false`,
@@ -347,6 +406,8 @@ export async function GET() {
       caHt: r.ca_ht,
       commandes: r.commandes,
       canaux: r.canaux ?? {},
+      devis: r.devis,
+      devisHt: r.devis_ht,
     }));
 
     // Ordre stable des canaux : par CA décroissant sur TOUTE la timeline, pas
@@ -359,11 +420,39 @@ export async function GET() {
     }
     const canaux = [...totauxCanal.entries()].sort((a, b) => b[1] - a[1]).map(([nom]) => nom);
 
+    const depuis = origine.rows[0]?.depuis ?? null;
+    const JOUR_MS = 86_400_000;
+    const maintenant = Date.now();
+
+    const comparaisons = Object.fromEntries(
+      FENETRES.map((j, i) => {
+        const debutPeriode = maintenant - 2 * j * JOUR_MS;
+        const finPeriode = maintenant - j * JOUR_MS;
+        // Recouvrement réel entre la période précédente et l'historique.
+        const debutUtile = depuis ? Math.max(debutPeriode, depuis.getTime()) : debutPeriode;
+        const joursCouverts = Math.max(0, Math.round(((finPeriode - debutUtile) / JOUR_MS) * 10) / 10);
+        return [
+          String(j),
+          {
+            caHt: precedents[i].caHt,
+            commandes: precedents[i].commandes,
+            devis: precedents[i].devis,
+            joursCouverts,
+            joursAttendus: j,
+            // Un demi-jour de marge : la borne d'historique est une heure
+            // précise, pas un minuit, et 29,6 jours sur 30 reste comparable.
+            fiable: joursCouverts >= j - 0.5,
+          } satisfies Comparaison,
+        ];
+      }),
+    );
+
     const data: CommerceStatsPayload = {
       fenetres: Object.fromEntries(FENETRES.map((j, i) => [String(j), resultats[i]])),
+      comparaisons,
       timeline: jours,
       canaux,
-      historiqueDepuis: origine.rows[0]?.depuis ? origine.rows[0].depuis.toISOString() : null,
+      historiqueDepuis: depuis ? depuis.toISOString() : null,
       generatedAt: new Date().toISOString(),
     };
     cache = { at: Date.now(), data };
