@@ -136,8 +136,9 @@ export function CommerceStatsPanel() {
               « combien », puis « dans quel sens », puis « par quel canal ». */}
           {data.timeline && data.timeline.length > 1 && (
             <div className="mt-5 border-gray-100 border-t pt-4 dark:border-gray-800/60">
-              <p className="mb-2 text-muted-foreground text-xs">CA HT par jour</p>
-              <CaTimelineChart timeline={data.timeline} />
+              {/* Pas de titre ici : le graphe porte ses propres boutons de mesure,
+                  qui disent déjà ce qui est tracé. */}
+              <CaTimelineChart timeline={data.timeline} canaux={data.canaux ?? []} />
             </div>
           )}
 
