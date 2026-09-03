@@ -32,6 +32,14 @@ import { type ChartConfig, ChartContainer, ChartTooltip } from "@/components/ui/
  * moyenne après découpe amputerait ses 6 premiers jours de leur historique et
  * ferait bouger la courbe selon le zoom. On calcule sur tout, on tranche après.
  *
+ * ── 🪤 Le clic passe par `payload`, JAMAIS par l'index ──────────────────────
+ *
+ * Recharts ne rend PAS un rectangle par point : les jours à zéro sont omis.
+ * Mesuré le 04/09 — 33 rectangles pour 53 jours. L'index reçu par `onClick` est
+ * donc celui du rectangle RENDU, pas celui de la série. Indexer nos données avec
+ * lui décale tout : cliquer la plus haute barre (2 septembre) filtrait sur le
+ * 14 août, sans erreur ni signe visible. `payload` porte la ligne réelle.
+ *
  * ── 🪤 Ne pas utiliser les tokens `--chart-*` ───────────────────────────────
  *
  * Ils sont IDENTIQUES en clair et en sombre dans `globals.css` (`--chart-5` vaut
@@ -83,6 +91,8 @@ const SERIE = { light: "#9ca3af", dark: "#6b7280" };
 // vraie couleur par thème, et on force `fillOpacity` à 1.
 const WEEKEND = { light: "#f3f4f6", dark: "#1c222c" };
 const AUJOURDHUI = { light: "#e5e7eb", dark: "#2b3240" };
+const DEVIS = { light: "#6b7280", dark: "#9ca3af" };
+const SELECTION = { light: "#111827", dark: "#f9fafb" };
 const MOYENNE = { light: "#111827", dark: "#f9fafb" };
 
 /** Clé CSS sûre : les noms de canaux portent espaces et accents. */
@@ -113,10 +123,22 @@ const fmtAxe = (v: number, unite: "eur" | "nb") => {
 const fmt = (v: number, unite: "eur" | "nb") =>
   unite === "eur" ? `${v.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €` : v.toLocaleString("fr-FR");
 
-export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]; canaux: string[] }) {
+export function CaTimelineChart({
+  timeline,
+  canaux,
+  onJourClick,
+  jourActif,
+}: {
+  timeline: JourTimeline[];
+  canaux: string[];
+  /** Clic sur une barre : remonte le jour `YYYY-MM-DD` pour filtrer la liste. */
+  onJourClick?: (jour: string) => void;
+  jourActif?: string | null;
+}) {
   const [mesure, setMesure] = useState<Mesure>("caHt");
   const [fenetre, setFenetre] = useState<string>("tout");
   const [parCanal, setParCanal] = useState(false);
+  const [avecDevis, setAvecDevis] = useState(false);
   const [canalSurvole, setCanalSurvole] = useState<string | null>(null);
 
   // La ventilation par canal n'existe que pour du CA : un canal ne porte pas de
@@ -166,6 +188,8 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
       moyenne: { label: "Moyenne 7 j", theme: MOYENNE },
       weekend: { label: "Week-end", theme: WEEKEND },
       aujourdhui: { label: "Jour en cours", theme: AUJOURDHUI },
+      devis: { label: "Devis", theme: DEVIS },
+      selection: { label: "Jour sélectionné", theme: SELECTION },
     };
     canauxAffiches.forEach((nom, i) => {
       c[slug(nom)] = { label: nom, theme: RAMPE[i] };
@@ -262,6 +286,19 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
           >
             Par canal
           </button>
+          <button
+            type="button"
+            onClick={() => setAvecDevis((v) => !v)}
+            aria-pressed={avecDevis}
+            title="Superposer le NOMBRE de devis créés chaque jour (axe de droite)"
+            className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              avecDevis
+                ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
+                : "border-gray-200 text-muted-foreground hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+            }`}
+          >
+            Devis
+          </button>
         </div>
       </div>
 
@@ -274,6 +311,7 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
               key={`we-${x1}`}
               x1={x1}
               x2={x2}
+              yAxisId="gauche"
               fill="var(--color-weekend)"
               fillOpacity={1}
               stroke="none"
@@ -284,6 +322,7 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
             <ReferenceArea
               x1={aujourdhui}
               x2={aujourdhui}
+              yAxisId="gauche"
               fill="var(--color-aujourdhui)"
               fillOpacity={1}
               stroke="var(--color-valeur)"
@@ -302,12 +341,28 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
             className="text-[11px]"
           />
           <YAxis
+            yAxisId="gauche"
             tickLine={false}
             axisLine={false}
             width={56}
             tickFormatter={(v: number) => fmtAxe(v, unite)}
             className="text-[11px] tabular-nums"
           />
+          {/* 🪤 Les devis vont sur un axe SÉPARÉ, en NOMBRE. Mesuré le 04/09 :
+              médiane 379 €/jour contre un maximum de 19 990 € — un rapport de
+              53. Sur l'axe du CA, ce seul jour écraserait toutes les barres à
+              hauteur nulle. Le montant reste dans l'infobulle. */}
+          {avecDevis && (
+            <YAxis
+              yAxisId="droite"
+              orientation="right"
+              tickLine={false}
+              axisLine={false}
+              width={28}
+              allowDecimals={false}
+              className="text-[11px] tabular-nums"
+            />
+          )}
 
           <ChartTooltip
             cursor={{ className: "fill-gray-500/10" }}
@@ -341,6 +396,16 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
                       moyenne 7 j : {fmt(Math.round(d.moyenne), unite)}
                     </div>
                   )}
+                  {d.devis > 0 && (
+                    <div className="text-muted-foreground tabular-nums">
+                      {d.devis} devis · {fmt(Math.round(d.devisHt), "eur")}
+                    </div>
+                  )}
+                  {onJourClick && (
+                    <div className="mt-1 text-[11px] text-muted-foreground italic">
+                      {jourActif === d.jour ? "cliquer pour tout réafficher" : "cliquer pour filtrer la liste"}
+                    </div>
+                  )}
                   {empile && ventil.length > 0 && (
                     <div className="mt-1.5 space-y-0.5 border-gray-100 border-t pt-1.5 dark:border-gray-800">
                       {ventil.map((x) => (
@@ -364,6 +429,12 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
             canauxAffiches.map((nom) => (
               <Bar
                 key={nom}
+                yAxisId="gauche"
+                onClick={(d) => {
+                  const j = (d?.payload as { jour?: string } | undefined)?.jour;
+                  if (j) onJourClick?.(j);
+                }}
+                cursor={onJourClick ? "pointer" : undefined}
                 dataKey={slug(nom)}
                 stackId="canal"
                 fill={`var(--color-${slug(nom)})`}
@@ -375,18 +446,37 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
               />
             ))
           ) : (
-            <Bar dataKey={mesure} radius={[2, 2, 0, 0]} isAnimationActive>
+            <Bar
+              yAxisId="gauche"
+              dataKey={mesure}
+              radius={[2, 2, 0, 0]}
+              isAnimationActive
+              onClick={(d) => {
+                const j = (d?.payload as { jour?: string } | undefined)?.jour;
+                if (j) onJourClick?.(j);
+              }}
+              cursor={onJourClick ? "pointer" : undefined}
+            >
               {donnees.map((d) => (
                 <Cell
                   key={d.jour}
-                  fill={d.estAujourdhui ? "var(--color-moyenne)" : "var(--color-valeur)"}
-                  fillOpacity={d.estAujourdhui ? 0.35 : 1}
+                  // Trois etats : jour selectionne (plein contraste), jour en
+                  // cours (estompe, il est incomplet), reste de la serie.
+                  fill={
+                    jourActif === d.jour
+                      ? "var(--color-selection)"
+                      : d.estAujourdhui
+                        ? "var(--color-moyenne)"
+                        : "var(--color-valeur)"
+                  }
+                  fillOpacity={jourActif && jourActif !== d.jour ? 0.35 : d.estAujourdhui ? 0.35 : 1}
                 />
               ))}
             </Bar>
           )}
 
           <Line
+            yAxisId="gauche"
             dataKey="moyenne"
             type="monotone"
             stroke="var(--color-moyenne)"
@@ -396,6 +486,20 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
             connectNulls={false}
             isAnimationActive
           />
+
+          {avecDevis && (
+            <Line
+              yAxisId="droite"
+              dataKey="devis"
+              type="monotone"
+              stroke="var(--color-devis)"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              dot={false}
+              activeDot={{ r: 3 }}
+              isAnimationActive
+            />
+          )}
         </BarChart>
       </ChartContainer>
 
@@ -430,6 +534,17 @@ export function CaTimelineChart({ timeline, canaux }: { timeline: JourTimeline[]
           <span className="inline-block h-0.5 w-4 bg-gray-900 dark:bg-gray-100" />
           moyenne 7 j
         </span>
+        {avecDevis && (
+          <span className="flex items-center gap-1.5">
+            <span
+              className="inline-block h-0.5 w-4"
+              style={{
+                backgroundImage: "repeating-linear-gradient(90deg, var(--color-devis) 0 4px, transparent 4px 7px)",
+              }}
+            />
+            nb de devis (axe droit)
+          </span>
+        )}
         <span>bandes grisées : week-ends</span>
         <span>dernier jour : en cours, hors moyenne</span>
       </div>

@@ -24,6 +24,17 @@ export type CartEtape = "panier" | "identifie" | "livraison" | "paiement" | "dev
 export interface CartRow {
   id: string;
   at: string;
+  /**
+   * Instant où le panier est devenu commande (`cart.completed_at`), `null`
+   * sinon. C'est la date qui sert à filtrer depuis le graphe CA.
+   *
+   * 🪤 NE PAS filtrer sur `at` pour ça : `at` est la date de CRÉATION du panier.
+   * Un panier ouvert le 30/08 et commandé le 02/09 ne sortirait pas sur un clic
+   * du 02. Mesuré le 04/09 : `completed_at` colle à `order.created_at` à
+   * 11 secondes en moyenne (max 5 min sur 92 paniers), donc le jour calendaire
+   * est le même.
+   */
+  commandeAt: string | null;
   /** "ads" si le panier porte une attribution Google Ads (click_type en
    *  metadata, stampée par le storefront), "site" sinon. Couverture : les
    *  commandes depuis le 25/08 ; les paniers en cours après storefront#1174. */
@@ -47,7 +58,12 @@ export interface CartsLivePayload {
   generatedAt: string;
 }
 
-const ALLOWED_DAYS = new Set([1, 7, 30]);
+/**
+ * 90 ajouté le 04/09 pour que le clic sur une barre du graphe CA puisse
+ * atteindre n'importe quel jour de l'historique. Volume mesuré : 304 paniers
+ * sur 30 j, 598 sur 90 j — la charge passe.
+ */
+const ALLOWED_DAYS = new Set([1, 7, 30, 90]);
 const CACHE_MS = 30_000;
 const cache = new Map<number, { at: number; data: CartsLivePayload }>();
 
@@ -55,6 +71,7 @@ const SQL = `
 SELECT
   c.id,
   c.created_at AS at,
+  c.completed_at AS commande_at,
   c.metadata->>'click_type' AS click_type,
   c.metadata->>'shipping_postal_code' AS cp,
   sc.name AS canal,
@@ -75,7 +92,8 @@ SELECT
 FROM cart c
 JOIN sales_channel sc ON sc.id = c.sales_channel_id
 JOIN cart_line_item li ON li.cart_id = c.id AND li.deleted_at IS NULL
-WHERE c.created_at >= now() - make_interval(days => $1)
+WHERE (c.created_at >= now() - make_interval(days => $1)
+       OR c.completed_at >= now() - make_interval(days => $1))
   AND c.deleted_at IS NULL
   AND (c.metadata IS NULL OR c.metadata->>'e2e' IS NULL)
   AND (c.email IS NULL OR c.email NOT ILIKE '%@elude.fr')
@@ -86,6 +104,7 @@ ORDER BY c.created_at DESC
 interface RawRow {
   id: string;
   at: Date;
+  commande_at: Date | null;
   click_type: string | null;
   cp: string | null;
   canal: string;
@@ -117,6 +136,7 @@ export async function GET(request: Request) {
       rows: rows.map((r) => ({
         id: r.id,
         at: r.at.toISOString(),
+        commandeAt: r.commande_at ? r.commande_at.toISOString() : null,
         source: (r.click_type ? "ads" : "site") as CartRow["source"],
         clickType: r.click_type,
         cp: r.cp,

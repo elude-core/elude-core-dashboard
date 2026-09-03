@@ -9,6 +9,26 @@ import { CommerceStatsPanel } from "@/components/elude/CommerceStatsPanel";
 
 const REFRESH_INTERVAL_MS = 60_000;
 
+/**
+ * Jour calendaire `YYYY-MM-DD` en heure de Paris.
+ *
+ * 🪤 Doit correspondre EXACTEMENT au découpage de `/api/commerce-stats`, qui
+ * groupe en `AT TIME ZONE 'Europe/Paris'`. Un `toISOString().slice(0,10)`
+ * découperait en UTC : une commande passée à 01 h du matin en été tomberait la
+ * veille et le clic ne la trouverait jamais.
+ */
+function jourParis(iso: string | null): string | null {
+  if (!iso) return null;
+  // `en-CA` rend nativement AAAA-MM-JJ.
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/Paris" });
+}
+
+/** Plus petite fenêtre servie par l'API qui couvre un jour donné. */
+function fenetrePour(jour: string): number {
+  const ecart = (Date.now() - new Date(`${jour}T12:00:00`).getTime()) / 86_400_000;
+  return [1, 7, 30, 90].find((d) => d >= ecart + 1) ?? 90;
+}
+
 const ETAPES: CartEtape[] = ["panier", "identifie", "livraison", "paiement", "devis", "commande"];
 
 const ETAPE_META: Record<CartEtape, { label: string; chip: string; dot: string }> = {
@@ -48,6 +68,7 @@ const WINDOWS: Array<{ days: number; label: string }> = [
   { days: 1, label: "Aujourd'hui" },
   { days: 7, label: "7 jours" },
   { days: 30, label: "30 jours" },
+  { days: 90, label: "90 jours" },
 ];
 
 const eur = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
@@ -88,6 +109,8 @@ export default function PaniersClient() {
   const [fEtape, setFEtape] = useState("");
   const [fSource, setFSource] = useState("");
   const [fQ, setFQ] = useState("");
+  /** Jour `YYYY-MM-DD` sélectionné en cliquant une barre du graphe CA. */
+  const [fJour, setFJour] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<"at" | "totalHt">("at");
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
 
@@ -154,6 +177,7 @@ export default function PaniersClient() {
         (!fCanal || r.canal === fCanal) &&
         (!fEtape || r.etape === fEtape) &&
         (!fSource || r.source === fSource) &&
+        (!fJour || jourParis(r.commandeAt) === fJour) &&
         (!q || (r.email ?? "").toLowerCase().includes(q) || r.produit.toLowerCase().includes(q)),
     );
     return [...out].sort((a, b) => {
@@ -161,7 +185,27 @@ export default function PaniersClient() {
       const kb = sortKey === "at" ? b.at : b.totalHt;
       return (ka < kb ? -1 : ka > kb ? 1 : 0) * sortDir;
     });
-  }, [rows, fCanal, fEtape, fSource, fQ, sortKey, sortDir]);
+  }, [rows, fCanal, fEtape, fSource, fJour, fQ, sortKey, sortDir]);
+
+  /**
+   * Clic sur une barre du graphe CA. Re-cliquer le même jour désélectionne.
+   *
+   * 🪤 Le graphe couvre tout l'historique, la liste seulement `days`. Cliquer le
+   * 20/08 alors que la fenêtre est à 7 jours donnerait une liste VIDE sans rien
+   * expliquer : on élargit donc la fenêtre à la plus petite qui couvre ce jour.
+   */
+  const choisirJour = useCallback(
+    (jour: string) => {
+      if (fJour === jour) {
+        setFJour(null);
+        return;
+      }
+      const besoin = fenetrePour(jour);
+      if (besoin > days) setDays(besoin);
+      setFJour(jour);
+    },
+    [fJour, days],
+  );
 
   const toggleSort = (key: "at" | "totalHt") => {
     setSortDir(sortKey === key ? (d) => (d === -1 ? 1 : -1) : () => -1);
@@ -223,7 +267,7 @@ export default function PaniersClient() {
         <Tile value={String(stats.relance)} label="identifiés à relancer" />
       </div>
 
-      <CommerceStatsPanel />
+      <CommerceStatsPanel onJourClick={choisirJour} jourActif={fJour} />
 
       <div className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border bg-card p-4">
@@ -279,6 +323,35 @@ export default function PaniersClient() {
           </div>
         </div>
       </div>
+
+      {fJour && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-300 border-dashed bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+          <span className="text-muted-foreground">Commandes du</span>
+          <span className="font-medium">
+            {new Date(`${fJour}T12:00:00`).toLocaleDateString("fr-FR", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            })}
+          </span>
+          <span className="text-muted-foreground">
+            — {filtered.length} ligne{filtered.length > 1 ? "s" : ""} dans la liste ci-dessous
+          </span>
+          {/* Les panneaux « Étape atteinte » et « Par canal » restent sur la
+              fenêtre entière, et c'est voulu : ils décrivent des PANIERS, dont
+              la plupart n'ont jamais de date de commande. Les filtrer par jour
+              de commande les viderait au lieu de les préciser. Le dire, plutôt
+              que de laisser croire à un filtre global qui ne mord pas. */}
+          <span className="text-muted-foreground text-xs italic">(les compteurs du haut restent sur {days} j)</span>
+          <button
+            type="button"
+            onClick={() => setFJour(null)}
+            className="ml-auto rounded-md border px-2 py-0.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            Tout réafficher
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <select
