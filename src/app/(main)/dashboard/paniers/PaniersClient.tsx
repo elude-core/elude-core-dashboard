@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, ShoppingCart } from "lucide-react";
 
 import type { CartEtape, CartsLivePayload } from "@/app/api/carts-live/route";
+import { CommerceStatsPanel } from "@/components/elude/CommerceStatsPanel";
 
 const REFRESH_INTERVAL_MS = 60_000;
 
@@ -221,6 +222,8 @@ export default function PaniersClient() {
         <Tile value={String(stats.devis)} label="devis en cours" />
         <Tile value={String(stats.relance)} label="identifiés à relancer" />
       </div>
+
+      <CommerceStatsPanel />
 
       <div className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border bg-card p-4">
