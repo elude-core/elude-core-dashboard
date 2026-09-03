@@ -10,7 +10,7 @@ import type { JourTimeline } from "@/app/api/commerce-stats/route";
  * ── Pourquoi une moyenne 7 j, et pas seulement des barres ───────────────────
  *
  * Mesuré le 03/09 : 19 jours sans aucune commande sur 52, et un rapport de 4,8
- * entre le jour médian (666 €) et le meilleur (3 196 €). Les barres seules
+ * entre le jour médian (555 € HT) et le meilleur (2 664 € HT). Les barres seules
  * dessinent un peigne où l'œil ne lit aucune tendance — or c'est la tendance
  * qu'on vient chercher. Les barres gardent la vérité brute, la ligne porte le
  * signal. La moyenne est GLISSANTE SUR 7 JOURS exactement pour absorber le
@@ -52,9 +52,9 @@ const R = 6;
 const H = 8;
 const B = 22;
 const W = 720;
-const HT = 200;
+const HAUT = 200;
 const PW = W - L - R;
-const PH = HT - H - B;
+const PH = HAUT - H - B;
 
 export function CaTimelineChart({ timeline }: { timeline: JourTimeline[] }) {
   const [survol, setSurvol] = useState<number | null>(null);
@@ -89,7 +89,7 @@ export function CaTimelineChart({ timeline }: { timeline: JourTimeline[] }) {
   return (
     <div className="relative">
       <svg
-        viewBox={`0 0 ${W} ${HT}`}
+        viewBox={`0 0 ${W} ${HAUT}`}
         className="w-full"
         role="img"
         aria-label={`CA HT par jour du ${timeline[0].jour} au ${timeline[dernier].jour}, avec moyenne glissante 7 jours`}
@@ -184,7 +184,7 @@ export function CaTimelineChart({ timeline }: { timeline: JourTimeline[] }) {
             <text
               key={`x-${d.jour}`}
               x={xCentre(i)}
-              y={HT - 7}
+              y={HAUT - 7}
               textAnchor={i === 0 ? "start" : "middle"}
               className="fill-gray-400 text-[10px] dark:fill-gray-500"
             >
