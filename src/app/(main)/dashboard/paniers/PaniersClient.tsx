@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, ShoppingCart } from "lucide-react";
 
 import type { CartEtape, CartRow, CartsLivePayload } from "@/app/api/carts-live/route";
+import { AffluenceHeatmap } from "@/components/elude/AffluenceHeatmap";
 import { CommerceStatsPanel } from "@/components/elude/CommerceStatsPanel";
 
 const REFRESH_INTERVAL_MS = 60_000;
@@ -294,40 +295,51 @@ export default function PaniersClient() {
 
       <CommerceStatsPanel onJourClick={choisirJour} jourActif={fJour} />
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-lg border bg-card p-4">
-          <h2 className="mb-3 font-semibold text-muted-foreground text-sm uppercase tracking-wide">Étape atteinte</h2>
-          <div className="space-y-2">
-            {perEtape.map(({ etape, count }) => {
-              const actif = fEtape === etape;
-              return (
-                <button
-                  key={etape}
-                  type="button"
-                  aria-pressed={actif}
-                  onClick={() => setFEtape(actif ? "" : etape)}
-                  title={actif ? "Cliquer pour retirer le filtre" : `Filtrer sur « ${ETAPE_META[etape].label} »`}
-                  className={`grid w-full grid-cols-[110px_1fr_44px] items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 ${
-                    actif ? "bg-muted" : ""
-                  } ${fEtape && !actif ? "opacity-50" : ""}`}
-                >
-                  <span
-                    className={`flex items-center gap-2 text-sm ${actif ? "font-medium text-foreground" : "text-muted-foreground"}`}
+      {/* Colonne large (2/3) : l'entonnoir, puis le damier des heures — les deux
+          se lisent l'un sous l'autre. Le « par canal » garde sa colonne à droite. */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        {/* 🪤 `min-w-0` : un item de grille vaut `min-width: auto`, donc il
+            s'élargit au contenu. Sans lui, le `min-w-[560px]` du damier pousse
+            la colonne à 594 px et c'est la PAGE ENTIÈRE qui défile de côté sur
+            mobile — pas le damier dans son cadre. Mesuré : 626 px de large pour
+            un écran de 390. */}
+        <div className="min-w-0 space-y-3 lg:col-span-2">
+          <div className="rounded-lg border bg-card p-4">
+            <h2 className="mb-3 font-semibold text-muted-foreground text-sm uppercase tracking-wide">Étape atteinte</h2>
+            <div className="space-y-2">
+              {perEtape.map(({ etape, count }) => {
+                const actif = fEtape === etape;
+                return (
+                  <button
+                    key={etape}
+                    type="button"
+                    aria-pressed={actif}
+                    onClick={() => setFEtape(actif ? "" : etape)}
+                    title={actif ? "Cliquer pour retirer le filtre" : `Filtrer sur « ${ETAPE_META[etape].label} »`}
+                    className={`grid w-full grid-cols-[110px_1fr_44px] items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 ${
+                      actif ? "bg-muted" : ""
+                    } ${fEtape && !actif ? "opacity-50" : ""}`}
                   >
-                    <span className={`h-2 w-2 rounded-sm ${ETAPE_META[etape].dot}`} aria-hidden />
-                    {ETAPE_META[etape].label}
-                  </span>
-                  <div className="relative h-4 rounded bg-muted">
-                    <div
-                      className={`absolute inset-y-0 left-0 min-w-0.5 rounded ${etape === "commande" ? "bg-emerald-500" : "bg-primary/70"}`}
-                      style={{ width: `${(100 * count) / maxEtape}%` }}
-                    />
-                  </div>
-                  <span className="text-right text-sm tabular-nums">{count}</span>
-                </button>
-              );
-            })}
+                    <span
+                      className={`flex items-center gap-2 text-sm ${actif ? "font-medium text-foreground" : "text-muted-foreground"}`}
+                    >
+                      <span className={`h-2 w-2 rounded-sm ${ETAPE_META[etape].dot}`} aria-hidden />
+                      {ETAPE_META[etape].label}
+                    </span>
+                    <div className="relative h-4 rounded bg-muted">
+                      <div
+                        className={`absolute inset-y-0 left-0 min-w-0.5 rounded ${etape === "commande" ? "bg-emerald-500" : "bg-primary/70"}`}
+                        style={{ width: `${(100 * count) / maxEtape}%` }}
+                      />
+                    </div>
+                    <span className="text-right text-sm tabular-nums">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
+          <AffluenceHeatmap />
         </div>
 
         <div className="rounded-lg border bg-card p-4">
