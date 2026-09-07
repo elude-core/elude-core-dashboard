@@ -62,8 +62,10 @@ export interface TrancheMontant {
   /** Paniers ayant atteint l'étape livraison : ils ont vu un montant de port. */
   ontVuLePort: number;
   commandes: number;
-  /** Restés à l'étape livraison, sans devis ni commande. */
+  /** Restés à l'étape livraison, sans devis ni commande — et sans reprise ailleurs. */
   bloques: number;
+  /** Laissés en plan, mais le client a commandé par un AUTRE panier ensuite. */
+  repris: number;
 }
 
 export interface CasPort {
@@ -72,6 +74,7 @@ export interface CasPort {
   ontVuLePort: number;
   commandes: number;
   abandons: number;
+  repris: number;
 }
 
 /** Deux bandes de montant qui se touchent de part et d'autre du franco. */
@@ -96,6 +99,11 @@ export interface PanierBloque {
   resteAvantFranco: number;
   produit: string;
   lignes: number;
+  /**
+   * Le client a commandé par un autre panier après celui-ci. Ce n'est donc pas
+   * un abandon : la ligne reste affichée, marquée, mais sort des taux.
+   */
+  reprisAilleurs: boolean;
 }
 
 export interface LivraisonPayload {
@@ -107,7 +115,16 @@ export interface LivraisonPayload {
   /** Fenêtre de montant de la liste, en euros HT. */
   filtre: { de: number; a: number };
   bloques: PanierBloque[];
+  /** HT des seules lignes non reprises ailleurs. */
   htBloque: number;
+  /** Lignes de la liste dont le client a commandé par un autre panier. */
+  reprisDansLaListe: number;
+  /**
+   * Paniers arrêtés à la livraison portant un e-mail ou un `customer_id`, sur
+   * le total. Hors de ce sous-ensemble, une reprise est indétectable — le
+   * nombre de « repris » est un plancher.
+   */
+  identifiables: { avecIdentite: number; total: number };
   /** Paniers du robot de 6 h écartés de tout l'écran. */
   nettoyage: number;
   generatedAt: string;
@@ -130,6 +147,7 @@ WITH p AS (
          c.completed_at,
          sc.name AS canal,
          c.email,
+         c.customer_id,
          COALESCE(a.postal_code, c.metadata->>'shipping_postal_code') AS cp,
          a.city AS ville,
          count(li.id)::int AS lignes,
@@ -137,7 +155,26 @@ WITH p AS (
          round(sum(li.unit_price * li.quantity)::numeric, 2)::float AS ht,
          (SELECT round(max(sm.amount)::numeric, 2)::float FROM cart_shipping_method sm
            WHERE sm.cart_id = c.id AND sm.deleted_at IS NULL) AS port,
-         EXISTS (SELECT 1 FROM quote q WHERE q.cart_id = c.id AND q.deleted_at IS NULL) AS a_devis
+         EXISTS (SELECT 1 FROM quote q WHERE q.cart_id = c.id AND q.deleted_at IS NULL) AS a_devis,
+         -- Le client est-il revenu commander par un AUTRE panier ?
+         --
+         -- 🪤 « c2.completed_at > c.created_at » : sans la borne, un client qui
+         -- avait déjà commandé le mois d'avant ferait passer son panier en
+         -- « repris » alors qu'il l'a bel et bien laissé en plan. Une commande
+         -- antérieure au panier existe dans les données (mesuré le 07/09).
+         --
+         -- 🪤 Ne se voit que sur les paniers IDENTIFIÉS : 43 des 127 bloqués
+         -- portent un e-mail ou un customer_id. Sur les 84 autres, un retour
+         -- par un second panier est invisible. Le compte est donc un PLANCHER,
+         -- jamais un total — l'écran doit l'écrire.
+         EXISTS (
+           SELECT 1 FROM cart c2
+            WHERE c2.deleted_at IS NULL AND c2.completed_at IS NOT NULL
+              AND c2.id <> c.id
+              AND c2.completed_at > c.created_at
+              AND ((c.email IS NOT NULL AND lower(c2.email) = lower(c.email))
+                OR (c.customer_id IS NOT NULL AND c2.customer_id = c.customer_id))
+         ) AS repris_ailleurs
     FROM cart c
     JOIN sales_channel sc ON sc.id = c.sales_channel_id
     JOIN cart_line_item li ON li.cart_id = c.id AND li.deleted_at IS NULL
@@ -158,7 +195,10 @@ SELECT b.de, b.a,
        count(p.id)::int AS paniers,
        count(p.id) FILTER (WHERE p.port IS NOT NULL)::int AS ont_vu_le_port,
        count(p.id) FILTER (WHERE p.completed_at IS NOT NULL)::int AS commandes,
-       count(p.id) FILTER (WHERE p.completed_at IS NULL AND NOT p.a_devis AND p.port IS NOT NULL)::int AS bloques
+       count(p.id) FILTER (WHERE p.completed_at IS NULL AND NOT p.a_devis AND p.port IS NOT NULL
+                             AND NOT p.repris_ailleurs)::int AS bloques,
+       count(p.id) FILTER (WHERE p.completed_at IS NULL AND p.port IS NOT NULL
+                             AND p.repris_ailleurs)::int AS repris
   FROM (VALUES (0, 50), (50, 200), (200, 500), (500, NULL)) AS b(de, a)
   LEFT JOIN p ON p.ht >= b.de AND (b.a IS NULL OR p.ht < b.a)
  GROUP BY b.de, b.a ORDER BY b.de
@@ -168,7 +208,8 @@ const SQL_CAS = `${BASE}
 SELECT p.port AS port_ht,
        count(*)::int AS ont_vu_le_port,
        count(*) FILTER (WHERE p.completed_at IS NOT NULL)::int AS commandes,
-       count(*) FILTER (WHERE p.completed_at IS NULL AND NOT p.a_devis)::int AS abandons
+       count(*) FILTER (WHERE p.completed_at IS NULL AND NOT p.a_devis AND NOT p.repris_ailleurs)::int AS abandons,
+       count(*) FILTER (WHERE p.completed_at IS NULL AND p.repris_ailleurs)::int AS repris
   FROM p
  WHERE p.port IS NOT NULL
  GROUP BY p.port ORDER BY p.port
@@ -190,7 +231,7 @@ SELECT b.libelle, b.de, b.a,
 `;
 
 const SQL_BLOQUES = `${BASE}
-SELECT p.id, p.at, p.canal, p.email, p.cp, p.ville, p.ht, p.produit, p.lignes
+SELECT p.id, p.at, p.canal, p.email, p.cp, p.ville, p.ht, p.produit, p.lignes, p.repris_ailleurs
   FROM p
  WHERE p.completed_at IS NULL AND NOT p.a_devis AND p.port IS NOT NULL
    AND p.ht >= $2 AND p.ht < $3
@@ -205,6 +246,21 @@ SELECT count(*)::int AS n
    AND (c.metadata IS NULL OR c.metadata->>'e2e' IS NULL)
    AND c.created_at >= now() - make_interval(days => $1)
    AND EXISTS (SELECT 1 FROM cart_line_item li WHERE li.cart_id = c.id AND li.deleted_at IS NULL)
+`;
+
+/**
+ * Combien des paniers arrêtés à la livraison portent une identité.
+ *
+ * ⚠️ C'est la portée de la détection « repris ailleurs » : hors de ce
+ * sous-ensemble, un client qui revient par un second panier est invisible. Le
+ * ratio est affiché à l'écran pour que « 2 repris » ne se lise jamais comme
+ * « seulement 2 clients sont revenus ».
+ */
+const SQL_IDENTITE = `${BASE}
+SELECT count(*)::int AS total,
+       count(*) FILTER (WHERE p.email IS NOT NULL OR p.customer_id IS NOT NULL)::int AS avec_identite
+  FROM p
+ WHERE p.completed_at IS NULL AND NOT p.a_devis AND p.port IS NOT NULL
 `;
 
 const JOURS_AUTORISES = new Set([30, 90]);
@@ -229,12 +285,13 @@ export async function GET(request: Request) {
 
   try {
     const db = medusaDb();
-    const [tranches, cas, bandes, bloques, nettoyage] = await Promise.all([
+    const [tranches, cas, bandes, bloques, nettoyage, identite] = await Promise.all([
       db.query(SQL_TRANCHES, [jours]),
       db.query(SQL_CAS, [jours]),
       db.query(SQL_BANDES, [jours]),
       db.query(SQL_BLOQUES, [jours, de, a]),
       db.query<{ n: number }>(SQL_NETTOYAGE, [jours]),
+      db.query<{ total: number; avec_identite: number }>(SQL_IDENTITE, [jours]),
     ]);
 
     const lignes: PanierBloque[] = bloques.rows.map((r: Record<string, unknown>) => ({
@@ -248,6 +305,7 @@ export async function GET(request: Request) {
       resteAvantFranco: Math.max(0, Math.round((FRANCO_HT - (r.ht as number)) * 100) / 100),
       produit: (r.produit as string | null) ?? "—",
       lignes: r.lignes as number,
+      reprisAilleurs: Boolean(r.repris_ailleurs),
     }));
 
     const data: LivraisonPayload = {
@@ -260,12 +318,14 @@ export async function GET(request: Request) {
         ontVuLePort: r.ont_vu_le_port as number,
         commandes: r.commandes as number,
         bloques: r.bloques as number,
+        repris: r.repris as number,
       })),
       cas: cas.rows.map((r: Record<string, unknown>) => ({
         portHt: r.port_ht as number,
         ontVuLePort: r.ont_vu_le_port as number,
         commandes: r.commandes as number,
         abandons: r.abandons as number,
+        repris: r.repris as number,
       })),
       bandes: bandes.rows.map((r: Record<string, unknown>) => ({
         libelle: String(r.libelle),
@@ -276,7 +336,12 @@ export async function GET(request: Request) {
       })),
       filtre: { de, a },
       bloques: lignes,
-      htBloque: Math.round(lignes.reduce((s, l) => s + l.ht, 0) * 100) / 100,
+      htBloque: Math.round(lignes.filter((l) => !l.reprisAilleurs).reduce((s, l) => s + l.ht, 0) * 100) / 100,
+      reprisDansLaListe: lignes.filter((l) => l.reprisAilleurs).length,
+      identifiables: {
+        avecIdentite: identite.rows[0]?.avec_identite ?? 0,
+        total: identite.rows[0]?.total ?? 0,
+      },
       nettoyage: nettoyage.rows[0]?.n ?? 0,
       generatedAt: new Date().toISOString(),
     };
