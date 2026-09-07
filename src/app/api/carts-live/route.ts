@@ -35,6 +35,15 @@ export interface CartRow {
    * est le même.
    */
   commandeAt: string | null;
+  /**
+   * Instant où la demande de devis est partie de ce panier, `null` sinon.
+   *
+   * 🪤 Sans lui, un panier d'étape « Devis » se rangerait à l'heure d'OUVERTURE
+   * du panier dans le damier des créneaux, pas à l'heure où le devis est parti.
+   * Mesuré sur les paniers convertis : 27 sur 99 changent d'heure entre les
+   * deux, et l'écart va jusqu'à 25 jours.
+   */
+  devisAt: string | null;
   /** "ads" si le panier porte une attribution Google Ads (click_type en
    *  metadata, stampée par le storefront), "site" sinon. Couverture : les
    *  commandes depuis le 25/08 ; les paniers en cours après storefront#1174. */
@@ -72,6 +81,7 @@ SELECT
   c.id,
   c.created_at AS at,
   c.completed_at AS commande_at,
+  (SELECT min(q.created_at) FROM quote q WHERE q.cart_id = c.id AND q.deleted_at IS NULL) AS devis_at,
   c.metadata->>'click_type' AS click_type,
   c.metadata->>'shipping_postal_code' AS cp,
   sc.name AS canal,
@@ -105,6 +115,7 @@ interface RawRow {
   id: string;
   at: Date;
   commande_at: Date | null;
+  devis_at: Date | null;
   click_type: string | null;
   cp: string | null;
   canal: string;
@@ -137,6 +148,7 @@ export async function GET(request: Request) {
         id: r.id,
         at: r.at.toISOString(),
         commandeAt: r.commande_at ? r.commande_at.toISOString() : null,
+        devisAt: r.devis_at ? r.devis_at.toISOString() : null,
         source: (r.click_type ? "ads" : "site") as CartRow["source"],
         clickType: r.click_type,
         cp: r.cp,

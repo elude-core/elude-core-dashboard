@@ -1,34 +1,45 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { Clock } from "lucide-react";
 
-import type { AffluencePayload } from "@/app/api/affluence/route";
 import {
-  additionne,
+  type Creneau,
+  echelle,
+  HEURES,
   JOURS,
   JOURS_COURTS,
+  libelleCreneau,
   libellePalier,
-  matriceVide,
   niveau,
-  paliers,
   total,
   totalParHeure,
   totalParJour,
 } from "@/lib/affluence";
 
 /**
- * Damier jour de semaine × heure — quand les commandes et les devis tombent.
+ * Damier jour de semaine × heure — quand l'activité tombe, et une facette de
+ * plus pour la découper.
  *
  * ── 🪤 Une case ne dit presque rien, les MARGES disent tout ─────────────────
  *
- * Mesuré le 07/09 : 121 événements pour 168 créneaux d'une heure, 58 cases
- * occupées, maximum 7. À ce volume, le damier seul est un ciel étoilé : chaque
- * case vaut 0 ou 1 et le regard y invente des motifs. Le total par heure (les
- * barres du bas) et le total par jour (la colonne de droite) portent donc le
- * signal réel — 15 h-17 h pèse 34 des 86 commandes, le samedi 2. C'est pour ça
- * qu'ils ne sont pas décoratifs et qu'on ne peut pas les retirer.
+ * Mesuré le 07/09 : 121 commandes et devis sur tout l'historique pour 168
+ * créneaux d'une heure, 58 cases occupées, maximum 7 — et bien moins dès qu'un
+ * filtre est actif. À ce volume le damier seul est un ciel étoilé : chaque case
+ * vaut 0 ou 1 et le regard y invente des motifs. Le total par heure (barres du
+ * bas) et le total par jour (colonne de droite) portent le signal réel —
+ * 15 h-17 h pèse 34 des 86 commandes, le samedi 2. Ils sont cliquables pour
+ * cette raison : c'est la lecture qui tient debout.
+ *
+ * ── 🪤 6 h du matin est un ROBOT, pas une affluence ─────────────────────────
+ *
+ * Sans filtre d'étape, le damier compte tous les paniers — et 92 d'entre eux
+ * naissent chaque jour entre 06 h 14 et 06 h 59, e-mail nul, 0 identifié et
+ * 0 commande. La case 6 h sort alors la plus foncée de l'écran. Elle est
+ * signalée sous le damier plutôt que filtrée en douce : masquer des lignes que
+ * les autres cartes comptent encore ferait deux vérités dans le même écran.
+ * Cliquer « Commande ✓ » ou « Devis → » l'écarte proprement.
  *
  * ── Palette achromatique, comme le reste du dashboard ───────────────────────
  *
@@ -36,23 +47,7 @@ import {
  * densité oui. Une rampe d'une seule teinte, du clair au foncé — inversée en
  * sombre, pas « retournée automatiquement » : les crans sont choisis contre
  * chaque fond.
- *
- * ── Ce que cette carte NE suit PAS ──────────────────────────────────────────
- *
- * Les filtres de la page (canal, étape, jour). Ils portent sur la fenêtre
- * choisie en haut — 7 jours par défaut, soit une quinzaine d'événements, de quoi
- * peindre un damier de bruit. Ici la fenêtre est TOUT l'historique (90 j max) et
- * elle est écrite sous le titre, pour qu'aucun doute ne subsiste sur ce qu'on
- * regarde quand un filtre est actif ailleurs.
  */
-
-type Serie = "tout" | "commandes" | "devis";
-
-const SERIES: Array<{ cle: Serie; label: string; aide: string }> = [
-  { cle: "tout", label: "Commandes + devis", aide: "Les deux séries additionnées, case par case." },
-  { cle: "commandes", label: "Commandes", aide: "Commandes non annulées, hors brouillons." },
-  { cle: "devis", label: "Devis", aide: "Demandes de devis créées." },
-];
 
 /**
  * Quatre crans, du plus clair au plus foncé. Les classes sont écrites en toutes
@@ -71,103 +66,70 @@ const classeCran = (i: number, n: number) => RAMPE[Math.min(RAMPE.length - 1, Ma
 
 const GRILLE = { gridTemplateColumns: "2.75rem repeat(24, minmax(0, 1fr)) 2.5rem" } as const;
 
-/** 0…23. Itérer sur les VALEURS, pas sur un index : c'est l'heure qui identifie la colonne. */
-const HEURES = Array.from({ length: 24 }, (_, h) => h);
-
-const fmtJour = (jour: string) =>
-  new Date(`${jour}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
-
-export function AffluenceHeatmap() {
-  const [data, setData] = useState<AffluencePayload | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
-  const [serie, setSerie] = useState<Serie>("tout");
-
-  useEffect(() => {
-    let vivant = true;
-    const charger = async () => {
-      try {
-        const r = await fetch("/api/affluence");
-        const j = (await r.json()) as AffluencePayload | { error: string };
-        if (!r.ok || "error" in j) throw new Error("error" in j ? j.error : `HTTP ${r.status}`);
-        if (vivant) {
-          setData(j);
-          setErreur(null);
-        }
-      } catch (e) {
-        if (vivant) setErreur(e instanceof Error ? e.message : "erreur");
-      }
-    };
-    void charger();
-    const t = setInterval(charger, 60_000);
-    return () => {
-      vivant = false;
-      clearInterval(t);
-    };
-  }, []);
-
-  const commandes = data?.commandes ?? matriceVide();
-  const devis = data?.devis ?? matriceVide();
-
-  const matrice = useMemo(
-    () => (serie === "commandes" ? commandes : serie === "devis" ? devis : additionne(commandes, devis)),
-    [serie, commandes, devis],
-  );
-
+export function AffluenceHeatmap({
+  matrice,
+  libelle,
+  fenetreJours,
+  selection,
+  onSelect,
+}: {
+  /** Déjà filtrée par toutes les autres facettes de la page. */
+  matrice: number[][];
+  /** Ce qu'une case compte, au pluriel : « paniers », « commandes »… */
+  libelle: string;
+  fenetreJours: number;
+  selection: Creneau | null;
+  onSelect: (c: Creneau) => void;
+}) {
   const parJour = useMemo(() => totalParJour(matrice), [matrice]);
   const parHeure = useMemo(() => totalParHeure(matrice), [matrice]);
   const somme = useMemo(() => total(matrice), [matrice]);
-  const max = useMemo(() => Math.max(0, ...matrice.flat()), [matrice]);
-  const maxHeure = Math.max(1, ...parHeure);
-  const bornes = useMemo(() => paliers(max), [max]);
+  const { bornes, sature } = useMemo(() => echelle(matrice.flat()), [matrice]);
   const occupees = useMemo(() => matrice.flat().filter((v) => v > 0).length, [matrice]);
+  const maxHeure = Math.max(1, ...parHeure);
 
-  if (erreur) {
-    return (
-      <div className="rounded-lg border bg-card p-4">
-        <p className="text-red-600 text-sm dark:text-red-400">Heures d&apos;affluence indisponibles : {erreur}</p>
-      </div>
-    );
-  }
+  const jourActif = selection?.jour ?? null;
+  const heureActive = selection?.heure ?? null;
+
+  /**
+   * Ce que pèse la sélection. Le damier, lui, reste à son total : c'est une
+   * facette, il se montre SANS son propre filtre. Sans ce chiffre, l'en-tête
+   * afficherait « 606 paniers · Mercredi 16 h » et les deux se liraient comme
+   * une seule phrase — 606 paniers le mercredi à 16 h.
+   */
+  const sommeSelection = useMemo(() => {
+    if (!selection) return null;
+    let n = 0;
+    for (const [j, ligne] of matrice.entries()) {
+      if (selection.jour !== null && selection.jour !== j) continue;
+      for (const [h, v] of ligne.entries()) {
+        if (selection.heure !== null && selection.heure !== h) continue;
+        n += v;
+      }
+    }
+    return n;
+  }, [matrice, selection]);
+  /** Une case est « en dehors » de la sélection : on l'éteint sans la cacher. */
+  const attenue = (j: number, h: number) =>
+    selection !== null && ((jourActif !== null && jourActif !== j) || (heureActive !== null && heureActive !== h));
 
   return (
     <div className="rounded-lg border bg-card p-4">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 font-semibold text-muted-foreground text-sm uppercase tracking-wide">
-            <Clock className="h-4 w-4" aria-hidden />
-            Heures d&apos;affluence
-          </h2>
-          <p className="mt-1 text-muted-foreground text-xs">
-            {data?.depuis
-              ? `Depuis le ${fmtJour(data.depuis)} · ${data.jours} jours · heure de Paris · indépendant des filtres de la page`
-              : "Chargement…"}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {SERIES.map((s) => (
-            <button
-              key={s.cle}
-              type="button"
-              onClick={() => setSerie(s.cle)}
-              title={s.aide}
-              aria-pressed={serie === s.cle}
-              className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
-                serie === s.cle
-                  ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="flex items-center gap-2 font-semibold text-muted-foreground text-sm uppercase tracking-wide">
+          <Clock className="h-4 w-4" aria-hidden />
+          Créneaux — jour × heure
+        </h2>
+        <p className="text-muted-foreground text-xs">
+          {somme} {libelle} · {fenetreJours} j · heure de Paris
+          {selection && ` · ${libelleCreneau(selection)} : ${sommeSelection}`}
+        </p>
       </div>
 
       <div className="overflow-x-auto">
         <div className="min-w-[560px]">
-          {/* En-têtes d'heures : une étiquette toutes les 3 h — 24 nombres
-              côte à côte sur cette largeur se chevauchent et deviennent une
-              frise grise illisible. */}
+          {/* Une étiquette d'heure toutes les 3 h : 24 nombres côte à côte sur
+              cette largeur se chevauchent et deviennent une frise illisible. */}
           <div className="grid gap-[2px] pb-1" style={GRILLE}>
             <span />
             {HEURES.map((h) => (
@@ -180,58 +142,87 @@ export function AffluenceHeatmap() {
 
           {JOURS.map((jour, j) => (
             <div key={jour} className="grid items-center gap-[2px] pb-[2px]" style={GRILLE}>
-              <span className="text-[11px] text-muted-foreground">{JOURS_COURTS[j]}</span>
+              <button
+                type="button"
+                onClick={() => onSelect({ jour: j, heure: null })}
+                aria-pressed={jourActif === j && heureActive === null}
+                title={`Filtrer sur les ${jour.toLowerCase()}s`}
+                className={`rounded text-left text-[11px] transition-colors hover:text-foreground ${
+                  jourActif === j ? "font-medium text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                {JOURS_COURTS[j]}
+              </button>
               {HEURES.map((h) => {
-                const n = niveau(matrice[j][h], bornes);
-                const occ = data?.occurrences[j] ?? 0;
+                const v = matrice[j][h];
+                const n = niveau(v, bornes);
+                const actif = jourActif === j && heureActive === h;
                 return (
-                  <div
+                  <button
                     key={`${jour}-${h}`}
-                    className={`aspect-square rounded-[3px] ${n === 0 ? VIDE : classeCran(n, bornes.length)}`}
-                    title={`${jour} ${h} h — ${commandes[j][h]} commande${commandes[j][h] > 1 ? "s" : ""}, ${
-                      devis[j][h]
-                    } devis${occ ? ` · ${occ} ${jour.toLowerCase()}s couverts` : ""}`}
+                    type="button"
+                    onClick={() => onSelect({ jour: j, heure: h })}
+                    aria-pressed={actif}
+                    title={`${jour} ${h} h — ${v} ${libelle}`}
+                    className={`aspect-square rounded-[3px] transition-opacity ${
+                      n === 0 ? VIDE : classeCran(n, bornes.length)
+                    } ${attenue(j, h) ? "opacity-30" : ""} ${
+                      actif ? "ring-2 ring-primary ring-offset-1 ring-offset-card" : ""
+                    }`}
                   />
                 );
               })}
-              <span className="text-right text-[11px] tabular-nums">{parJour[j]}</span>
+              <span className={`text-right text-[11px] tabular-nums ${jourActif === j ? "font-medium" : ""}`}>
+                {parJour[j]}
+              </span>
             </div>
           ))}
 
-          {/* Profil horaire : la seule lecture solide à ce volume. */}
+          {/* Profil horaire : la seule lecture solide à ce volume, donc cliquable. */}
           <div className="grid items-end gap-[2px] pt-1" style={GRILLE}>
             <span className="pb-0.5 text-[10px] text-muted-foreground">Total</span>
-            {HEURES.map((h) => (
-              <div
-                key={`profil-${h}`}
-                className="flex h-9 items-end"
-                title={`${h} h — ${parHeure[h]} sur ${somme}${
-                  somme > 0 ? ` (${Math.round((100 * parHeure[h]) / somme)} %)` : ""
-                }`}
-              >
-                <div
-                  className="w-full rounded-t-[2px] bg-gray-400 dark:bg-gray-500"
-                  style={{ height: parHeure[h] > 0 ? `${Math.max(6, (100 * parHeure[h]) / maxHeure)}%` : "1px" }}
-                />
-              </div>
-            ))}
-            <span className="pb-0.5 text-right text-[11px] font-medium tabular-nums">{somme}</span>
+            {HEURES.map((h) => {
+              const v = parHeure[h];
+              const actif = heureActive === h && jourActif === null;
+              return (
+                <button
+                  key={`profil-${h}`}
+                  type="button"
+                  onClick={() => onSelect({ jour: null, heure: h })}
+                  aria-pressed={actif}
+                  title={`${h} h, tous les jours — ${v} ${libelle}${
+                    somme > 0 ? ` (${Math.round((100 * v) / somme)} %)` : ""
+                  }`}
+                  className={`flex h-9 items-end rounded-t-[2px] transition-opacity hover:opacity-100 ${
+                    heureActive !== null && heureActive !== h ? "opacity-30" : ""
+                  }`}
+                >
+                  <div
+                    className={`w-full rounded-t-[2px] ${
+                      actif ? "bg-gray-900 dark:bg-gray-100" : "bg-gray-400 dark:bg-gray-500"
+                    }`}
+                    style={{ height: v > 0 ? `${Math.max(6, (100 * v) / maxHeure)}%` : "1px" }}
+                  />
+                </button>
+              );
+            })}
+            <span className="pb-0.5 text-right font-medium text-[11px] tabular-nums">{somme}</span>
           </div>
         </div>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-muted-foreground text-xs">
         <span>
-          {somme} sur {data?.jours ?? 0} jours · {occupees} créneaux occupés sur 168 — la tendance se lit dans les
-          totaux, pas case par case.
+          {occupees} créneaux occupés sur 168 — cliquer une case, un jour ou une heure filtre l&apos;écran. À 6 h, un
+          robot ouvre des paniers qui ne convertissent jamais.
         </span>
         <span className="flex items-center gap-1.5">
           <span className={`inline-block size-3 rounded-[3px] ${VIDE}`} aria-hidden />
           <span>0</span>
-          {bornes.map((_, i) => (
-            <span key={`palier-${bornes[i]}`} className="flex items-center gap-1">
+          {bornes.map((borne, i) => (
+            <span key={`palier-${borne}`} className="flex items-center gap-1">
               <span className={`inline-block size-3 rounded-[3px] ${classeCran(i + 1, bornes.length)}`} aria-hidden />
-              <span className="tabular-nums">{libellePalier(bornes, i)}</span>
+              <span className="tabular-nums">{libellePalier(bornes, i, sature)}</span>
             </span>
           ))}
         </span>
