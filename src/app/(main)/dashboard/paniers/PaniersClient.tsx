@@ -7,6 +7,7 @@ import { Loader2, RefreshCw, ShoppingCart } from "lucide-react";
 import type { CartEtape, CartRow, CartsLivePayload } from "@/app/api/carts-live/route";
 import { AffluenceHeatmap } from "@/components/elude/AffluenceHeatmap";
 import { CommerceStatsPanel } from "@/components/elude/CommerceStatsPanel";
+import { bascule, type Creneau, creneauVide, dansCreneau, libelleCreneau, versMatrice } from "@/lib/affluence";
 
 const REFRESH_INTERVAL_MS = 60_000;
 
@@ -22,6 +23,20 @@ function jourParis(iso: string | null): string | null {
   if (!iso) return null;
   // `en-CA` rend nativement AAAA-MM-JJ.
   return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/Paris" });
+}
+
+/**
+ * Instant qui situe une ligne dans le temps : celui de l'ÉTAPE ATTEINTE, pas
+ * celui de l'ouverture du panier.
+ *
+ * 🪤 Prendre `at` pour tout le monde rangerait une commande à l'heure où le
+ * panier a été ouvert. Mesuré le 07/09 : 27 paniers convertis sur 99 changent
+ * d'heure entre les deux, et l'écart va de 7 minutes (médiane) à 25 jours. Le
+ * damier des créneaux se lirait alors comme « quand les gens ouvrent un
+ * panier », en prétendant dire « quand ils commandent ».
+ */
+function instantEtape(r: CartRow): string {
+  return r.commandeAt ?? r.devisAt ?? r.at;
 }
 
 /** Plus petite fenêtre servie par l'API qui couvre un jour donné. */
@@ -112,6 +127,8 @@ export default function PaniersClient() {
   const [fQ, setFQ] = useState("");
   /** Jour `YYYY-MM-DD` sélectionné en cliquant une barre du graphe CA. */
   const [fJour, setFJour] = useState<string | null>(null);
+  /** Case, ligne ou colonne sélectionnée dans le damier des créneaux. */
+  const [fCreneau, setFCreneau] = useState<Creneau | null>(null);
   const [sortKey, setSortKey] = useState<"at" | "totalHt">("at");
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
 
@@ -174,17 +191,18 @@ export default function PaniersClient() {
    * analysant un pic, mais ça interdit de lire « lignes » comme « commandes ».
    */
   const passe = useCallback(
-    (r: CartRow, sauf?: "canal" | "etape" | "source") => {
+    (r: CartRow, sauf?: "canal" | "etape" | "source" | "creneau") => {
       const q = fQ.toLowerCase();
       return (
         (sauf === "canal" || !fCanal || r.canal === fCanal) &&
         (sauf === "etape" || !fEtape || r.etape === fEtape) &&
         (sauf === "source" || !fSource || r.source === fSource) &&
+        (sauf === "creneau" || dansCreneau(instantEtape(r), fCreneau)) &&
         (!fJour || jourParis(r.commandeAt) === fJour || jourParis(r.at) === fJour) &&
         (!q || (r.email ?? "").toLowerCase().includes(q) || r.produit.toLowerCase().includes(q))
       );
     },
-    [fCanal, fEtape, fSource, fJour, fQ],
+    [fCanal, fEtape, fSource, fJour, fQ, fCreneau],
   );
 
   const perEtape = useMemo(() => {
@@ -203,6 +221,20 @@ export default function PaniersClient() {
       .sort((a, b) => b.total - a.total);
   }, [rows, canaux, passe]);
   const maxCanal = Math.max(1, ...perCanal.map((x) => x.total));
+
+  /** Le damier voit le monde SANS sa propre sélection, comme les autres facettes. */
+  const perCreneau = useMemo(
+    () => versMatrice(rows.filter((r) => passe(r, "creneau")).map(instantEtape)),
+    [rows, passe],
+  );
+
+  /**
+   * Ce qu'une case du damier compte. Suit le filtre d'étape : sans lui, ce sont
+   * des paniers — et le dire évite de lire « 27 » comme 27 commandes.
+   */
+  const libelleCreneaux = fEtape
+    ? `${ETAPE_META[fEtape as CartEtape].label.replace(/[→✓]/g, "").trim().toLowerCase()}s`
+    : "paniers";
 
   const filtered = useMemo(() => {
     const out = rows.filter((r) => passe(r));
@@ -339,7 +371,13 @@ export default function PaniersClient() {
             </div>
           </div>
 
-          <AffluenceHeatmap />
+          <AffluenceHeatmap
+            matrice={perCreneau}
+            libelle={libelleCreneaux}
+            fenetreJours={days}
+            selection={fCreneau}
+            onSelect={(c) => setFCreneau(bascule(fCreneau, c))}
+          />
         </div>
 
         <div className="rounded-lg border bg-card p-4">
@@ -446,6 +484,16 @@ export default function PaniersClient() {
           <option value="ads">Ads</option>
           <option value="site">Site</option>
         </select>
+        {!creneauVide(fCreneau) && fCreneau && (
+          <button
+            type="button"
+            onClick={() => setFCreneau(null)}
+            title="Retirer le filtre de créneau"
+            className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm hover:bg-primary/20"
+          >
+            {libelleCreneau(fCreneau)} ✕
+          </button>
+        )}
         <input
           type="search"
           value={fQ}
