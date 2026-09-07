@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { exclureE2e, exclureInternes } from "@/lib/exclusions";
 import { medusaDb } from "@/lib/medusa-db";
 
 export const runtime = "nodejs";
@@ -129,8 +130,8 @@ SELECT c.id,
   JOIN cart_line_item li ON li.cart_id = c.id AND li.deleted_at IS NULL
   LEFT JOIN cart_address a ON a.id = c.shipping_address_id
  WHERE c.deleted_at IS NULL
-   AND (c.metadata IS NULL OR c.metadata->>'e2e' IS NULL)
-   AND (c.email IS NULL OR c.email NOT ILIKE '%@elude.fr')
+   AND ${exclureE2e("c")}
+   AND ${exclureInternes("c.email")}
    AND (c.created_at >= now() - make_interval(days => $1)
         OR c.completed_at >= now() - make_interval(days => $1))
    -- Le robot de 6 h : anonyme, jamais converti, toujours entre 06 h et 07 h.
@@ -145,7 +146,7 @@ SELECT count(*)::int AS n
   FROM cart c
  WHERE c.deleted_at IS NULL AND c.email IS NULL AND c.completed_at IS NULL
    AND extract(hour FROM c.created_at AT TIME ZONE 'Europe/Paris') = 6
-   AND (c.metadata IS NULL OR c.metadata->>'e2e' IS NULL)
+   AND ${exclureE2e("c")}
    AND c.created_at >= now() - make_interval(days => $1)
    AND EXISTS (SELECT 1 FROM cart_line_item li WHERE li.cart_id = c.id AND li.deleted_at IS NULL)
 `;

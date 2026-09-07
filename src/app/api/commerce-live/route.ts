@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { estEmailInterne } from "@/lib/exclusions";
 import { parisMidnightMs } from "@/lib/paris-midnight";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ export const dynamic = "force-dynamic";
  *   - GET /admin/orders?order=-created_at        → commandes (sales_channel = marque)
  *   - GET /admin/quotes?order=-created_at        → devis (module quotes custom)
  * Les montants Medusa sont en EUROS (pas en centimes — cf. memory).
+ * Les comptes internes de l'équipe sont écartés ici aussi (`lib/exclusions.ts`)
+ * : sans ça, l'écran TV fêterait une commande de test au son de la caisse.
  * Filtre « aujourd'hui » côté route (borne minuit Europe/Paris) : on tire les
  * 50 dernières et on filtre — plus robuste que la syntaxe created_at[$gte]
  * selon les versions. Les commandes `canceled` sont exclues du CA.
@@ -90,12 +93,19 @@ interface OrdersResponse {
     created_at?: string;
     total?: number;
     status?: string;
+    email?: string | null;
     sales_channel?: { name?: string } | null;
   }>;
 }
 
 interface QuotesResponse {
-  quotes?: Array<{ id?: string; created_at?: string; status?: string | null }>;
+  /** `cart` porte l'e-mail : c'est par lui qu'un devis interne se reconnaît. */
+  quotes?: Array<{
+    id?: string;
+    created_at?: string;
+    status?: string | null;
+    cart?: { email?: string | null } | null;
+  }>;
 }
 
 async function buildPayload(): Promise<TvCommercePayload> {
@@ -103,12 +113,14 @@ async function buildPayload(): Promise<TvCommercePayload> {
 
   const [ordersRes, quotesRes] = await Promise.all([
     medusaGet<OrdersResponse>(
-      "/admin/orders?limit=50&order=-created_at&fields=display_id,created_at,total,status,*sales_channel",
+      "/admin/orders?limit=50&order=-created_at&fields=display_id,created_at,total,status,email,*sales_channel",
     ),
     medusaGet<QuotesResponse>("/admin/quotes?limit=50&order=-created_at").catch((): QuotesResponse => ({ quotes: [] })),
   ]);
 
-  const valid = (ordersRes.orders ?? []).filter((o) => o.status !== "canceled" && o.created_at);
+  const valid = (ordersRes.orders ?? []).filter(
+    (o) => o.status !== "canceled" && o.created_at && !estEmailInterne(o.email),
+  );
   const orders: TvOrder[] = valid.map((o) => ({
     displayId: o.display_id ?? 0,
     brand: o.sales_channel?.name ?? "—",
@@ -119,7 +131,7 @@ async function buildPayload(): Promise<TvCommercePayload> {
   const today = orders.filter((o) => new Date(o.at).getTime() >= midnight);
 
   const quotesAll: TvQuote[] = (quotesRes.quotes ?? [])
-    .filter((q) => q.created_at)
+    .filter((q) => q.created_at && !estEmailInterne(q.cart?.email))
     .map((q) => ({ id: q.id ?? "", at: q.created_at as string, status: q.status ?? null }));
   const quotesToday = quotesAll.filter((q) => new Date(q.at).getTime() >= midnight);
 
