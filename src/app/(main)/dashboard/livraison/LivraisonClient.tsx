@@ -191,7 +191,11 @@ export default function LivraisonClient() {
         <Tile
           value={eur(data?.htBloque ?? 0)}
           label={`HT en plan · ${tranche.label}`}
-          hint={`${data?.bloques.length ?? 0} paniers arrêtés à la livraison`}
+          hint={
+            data && data.reprisDansLaListe > 0
+              ? `${data.bloques.length - data.reprisDansLaListe} abandons · ${data.reprisDansLaListe} repris ailleurs`
+              : `${data?.bloques.length ?? 0} paniers arrêtés à la livraison`
+          }
         />
       </div>
 
@@ -310,6 +314,7 @@ export default function LivraisonClient() {
               <th className="px-3 py-2.5">Email</th>
               <th className="px-3 py-2.5 text-right">Total HT</th>
               <th className="px-3 py-2.5 text-right">Reste avant franco</th>
+              <th className="px-3 py-2.5">Suite</th>
             </tr>
           </thead>
           <tbody>
@@ -330,11 +335,23 @@ export default function LivraisonClient() {
                 <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
                   {b.resteAvantFranco > 0 ? `${eur2(b.resteAvantFranco)} €` : "—"}
                 </td>
+                <td className="whitespace-nowrap px-3 py-2">
+                  {b.reprisAilleurs ? (
+                    <span
+                      title="Ce client a commandé ensuite par un autre panier : ce n'est pas un abandon."
+                      className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-[11px] text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                    >
+                      commandé ailleurs
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
               </tr>
             ))}
             {data && data.bloques.length === 0 && !chargement && (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground text-sm">
+                <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground text-sm">
                   Aucun panier arrêté à la livraison sur cette tranche et cette fenêtre.
                 </td>
               </tr>
@@ -346,7 +363,20 @@ export default function LivraisonClient() {
       {data && (
         <p className="text-muted-foreground text-xs">
           Actualisé {dateFmt.format(new Date(data.generatedAt))} · fenêtre {data.jours} j · un panier « arrêté à la
-          livraison » a choisi une méthode de livraison, puis ni payé ni demandé de devis.
+          livraison » a choisi une méthode de livraison, puis ni payé ni demandé de devis
+          {data.reprisDansLaListe > 0 &&
+            ` — ${data.reprisDansLaListe} de cette liste ont été repris ailleurs et sortent des taux et du HT en plan`}
+          .{" "}
+          {data.identifiables.total > 0 && (
+            <>
+              La reprise ne se voit que sur les paniers identifiés :{" "}
+              <strong>
+                {data.identifiables.avecIdentite} sur {data.identifiables.total}
+              </strong>{" "}
+              portent un e-mail ou un compte. Sur les autres, un client revenu par un second panier est invisible — le
+              compte des repris est un plancher, jamais un total.
+            </>
+          )}
         </p>
       )}
     </div>
