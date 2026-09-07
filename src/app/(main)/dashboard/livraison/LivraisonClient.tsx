@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Loader2, RefreshCw, Truck } from "lucide-react";
 
-import type { LivraisonPayload } from "@/app/api/livraison/route";
+import type { LigneLivraison, LivraisonPayload, StatutLivraison } from "@/app/api/livraison/route";
 
 /**
  * Frais de port : qui les voit, qui repart, ce qui reste en plan.
@@ -17,14 +17,30 @@ import type { LivraisonPayload } from "@/app/api/livraison/route";
  * aujourd'hui sur une trentaine de paniers de chaque côté. Un écran qui
  * afficherait « X % d'abandon dus au port » inventerait une causalité.
  *
- * Il montre donc les faits, avec leurs effectifs à côté de chaque taux, et
- * dit lui-même quand un chiffre est trop maigre pour trancher. C'est un écran
- * à regarder dans trois mois autant qu'aujourd'hui.
+ * Il montre des faits, avec leurs effectifs à côté de chaque taux, et dit
+ * lui-même quand un chiffre est trop maigre pour trancher.
  *
- * 🪤 Tous les taux ont pour dénominateur les paniers qui ONT VU le port (ceux
- * qui ont atteint l'étape livraison). Rapporter les abandons au total des
- * paniers mélangerait ceux qui sont partis avant d'avoir vu le moindre montant
- * — 214 paniers sur 300 dans la tranche 50-200 €, mesuré le 07/09.
+ * ── 🪤 Tout se calcule sur la SÉLECTION, tuiles comprises ───────────────────
+ *
+ * Les agrégats venaient du serveur et portaient sur tout, pendant que le
+ * tableau montrait une sélection : deux vérités dans le même écran, la plus
+ * fausse en gros caractères. Tout est donc recalculé ici, sur les lignes qui
+ * passent les filtres.
+ *
+ * ── 🪤 …sauf le MONTANT et le STATUT, qui sont ce qu'on compare ─────────────
+ *
+ * Le franco s'applique dès 200 € HT : filtrer sur 50-200 € vide mécaniquement
+ * la colonne « franco ». Et filtrer sur « Arrêté » retire toute commande de la
+ * population — vu à l'écran avant correction, la tuile annonçait « 93 paniers
+ * ont vu le port payant, 0 ont commandé » et « 95 % repartent ».
+ *
+ * Les tuiles de comparaison, les bandes du seuil et le tableau des tranches
+ * suivent donc le contexte (store, jour, recherche) mais jamais ces deux-là.
+ * C'est écrit sous les tuiles, pas deviné.
+ *
+ * 🪤 Les taux ont pour dénominateur les paniers qui ONT VU le port. Ceux qui
+ * sont partis avant l'étape livraison (214 sur 300 dans la tranche 50-200 €)
+ * ne peuvent pas avoir abandonné à cause de lui.
  */
 
 const eur = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
@@ -38,6 +54,9 @@ const dateFmt = new Intl.DateTimeFormat("fr-FR", {
   minute: "2-digit",
 });
 
+/** Jour calendaire `YYYY-MM-DD` en heure de Paris — `en-CA` le rend nativement. */
+const jourParis = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/Paris" });
+
 /**
  * Un taux ne s'affiche pas seul : sous 30 observations, l'intervalle de
  * confiance dépasse ±18 points et deux barres qui « se croisent » ne veulent
@@ -46,6 +65,25 @@ const dateFmt = new Intl.DateTimeFormat("fr-FR", {
 const EFFECTIF_MINIMAL = 30;
 
 const pct = (n: number, sur: number): string => (sur > 0 ? `${Math.round((100 * n) / sur)} %` : "—");
+
+const STATUT_META: Record<StatutLivraison, { label: string; chip: string }> = {
+  commande: {
+    label: "Commande ✓",
+    chip: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+  },
+  devis: { label: "Devis →", chip: "bg-teal-100 text-teal-700 dark:bg-teal-950/50 dark:text-teal-300" },
+  bloque: { label: "Arrêté", chip: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300" },
+  "avant-port": { label: "Parti avant", chip: "bg-muted text-muted-foreground" },
+};
+
+const TRANCHES: Array<{ cle: string; label: string; de: number; a: number }> = [
+  { cle: "tout", label: "Tous montants", de: 0, a: Number.POSITIVE_INFINITY },
+  { cle: "0-50", label: "< 50 €", de: 0, a: 50 },
+  { cle: "50-200", label: "50 – 200 €", de: 50, a: 200 },
+  { cle: "200+", label: "≥ 200 € (franco)", de: 200, a: Number.POSITIVE_INFINITY },
+];
+
+type CleTri = "at" | "cp" | "ville" | "canal" | "produit" | "ht" | "reste" | "statut";
 
 function Tile({ value, label, hint }: { value: string; label: string; hint?: string }) {
   return (
@@ -69,27 +107,39 @@ function Barre({ part, sur }: { part: number; sur: number }) {
   );
 }
 
-const TRANCHES_LISTE: Array<{ de: number; a: number; label: string }> = [
-  { de: 50, a: 200, label: "50 – 200 € HT" },
-  { de: 0, a: 50, label: "< 50 € HT" },
-  { de: 200, a: 100_000, label: "≥ 200 € HT (franco)" },
-  { de: 0, a: 100_000, label: "Tous montants" },
-];
+/** Compte commandes / abandons parmi des lignes ayant vu le port. */
+function bilan(lignes: LigneLivraison[]) {
+  const ontVuLePort = lignes.filter((l) => l.port !== null);
+  return {
+    ontVuLePort: ontVuLePort.length,
+    commandes: ontVuLePort.filter((l) => l.statut === "commande").length,
+    // Un panier repris ailleurs n'est pas un abandon : le client a commandé.
+    abandons: ontVuLePort.filter((l) => l.statut === "bloque" && !l.reprisAilleurs).length,
+    repris: ontVuLePort.filter((l) => l.statut === "bloque" && l.reprisAilleurs).length,
+  };
+}
 
 export default function LivraisonClient() {
   const [jours, setJours] = useState(90);
-  const [tranche, setTranche] = useState(TRANCHES_LISTE[0]);
-  const [data, setData] = useState<LivraisonPayload | null>(null);
+  const [payload, setPayload] = useState<LivraisonPayload | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
   const [chargement, setChargement] = useState(true);
 
-  const charger = useCallback(async (j: number, de: number, a: number) => {
+  const [fCanal, setFCanal] = useState("");
+  const [fTranche, setFTranche] = useState("50-200");
+  const [fStatut, setFStatut] = useState<StatutLivraison | "">("bloque");
+  const [fJour, setFJour] = useState("");
+  const [fQ, setFQ] = useState("");
+  const [tri, setTri] = useState<CleTri>("ht");
+  const [sens, setSens] = useState<-1 | 1>(-1);
+
+  const charger = useCallback(async (j: number) => {
     setChargement(true);
     try {
-      const r = await fetch(`/api/livraison?jours=${j}&de=${de}&a=${a}`, { cache: "no-store" });
+      const r = await fetch(`/api/livraison?jours=${j}`, { cache: "no-store" });
       const json = (await r.json()) as LivraisonPayload | { error: string };
       if (!r.ok || "error" in json) throw new Error("error" in json ? json.error : `HTTP ${r.status}`);
-      setData(json);
+      setPayload(json);
       setErreur(null);
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
@@ -99,28 +149,154 @@ export default function LivraisonClient() {
   }, []);
 
   useEffect(() => {
-    void charger(jours, tranche.de, tranche.a);
-  }, [jours, tranche, charger]);
+    void charger(jours);
+  }, [jours, charger]);
+
+  const lignes = useMemo(() => payload?.lignes ?? [], [payload]);
+  const seuils = payload?.seuils;
+  const franco = seuils?.francoHt ?? 200;
+
+  const canaux = useMemo(() => [...new Set(lignes.map((l) => l.canal))].sort(), [lignes]);
+  const joursDispo = useMemo(
+    () => [...new Set(lignes.map((l) => jourParis(l.commandeAt ?? l.at)))].sort((a, b) => b.localeCompare(a)),
+    [lignes],
+  );
+
+  const tranche = useMemo(() => TRANCHES.find((t) => t.cle === fTranche) ?? TRANCHES[0], [fTranche]);
 
   /**
-   * 🪤 Additionner TOUS les tarifs payants, pas seulement les 12 € : la base
-   * porte déjà un panier à 25 € (livraison hors standard). Un `find` sur le
-   * premier tarif non nul l'oublierait en silence, et le total de la tuile ne
-   * correspondrait plus à la liste.
+   * Filtres de CONTEXTE : où, quand, quoi. Ils rétrécissent la population sans
+   * toucher à ce qu'on y mesure.
    */
-  const casPort = (data?.cas ?? [])
-    .filter((c) => c.portHt > 0)
-    .reduce(
-      (acc, c) => ({
-        portHt: 0,
-        ontVuLePort: acc.ontVuLePort + c.ontVuLePort,
-        commandes: acc.commandes + c.commandes,
-        abandons: acc.abandons + c.abandons,
+  const passeContexte = useCallback(
+    (l: LigneLivraison) => {
+      const q = fQ.trim().toLowerCase();
+      return (
+        (!fCanal || l.canal === fCanal) &&
+        (!fJour || jourParis(l.commandeAt ?? l.at) === fJour) &&
+        (!q ||
+          l.produit.toLowerCase().includes(q) ||
+          (l.email ?? "").toLowerCase().includes(q) ||
+          (l.cp ?? "").toLowerCase().includes(q) ||
+          (l.ville ?? "").toLowerCase().includes(q) ||
+          l.canal.toLowerCase().includes(q))
+      );
+    },
+    [fCanal, fJour, fQ],
+  );
+
+  /**
+   * Filtres de MESURE : montant et statut. Les agrégats les ignorent.
+   *
+   * 🪤 Ils sont la dimension même de ce qui est comparé, et s'y soumettre les
+   * vide de leur sens. Vu à l'écran avant correction : filtre « Arrêté » actif
+   * par défaut, la tuile annonçait « 93 paniers ont vu le port payant, 0 ont
+   * commandé » et « 95 % repartent » — une population sans une seule commande
+   * ne peut rien dire d'un taux de conversion. Idem pour le montant : le franco
+   * commence à 200 € HT, filtrer sur 50-200 € vide la colonne « franco ».
+   */
+  const passe = useCallback(
+    (l: LigneLivraison) =>
+      passeContexte(l) && l.ht >= tranche.de && l.ht < tranche.a && (!fStatut || l.statut === fStatut),
+    [passeContexte, fStatut, tranche],
+  );
+
+  /** Population des comparaisons : le contexte seul. */
+  const horsMontant = useMemo(() => lignes.filter(passeContexte), [lignes, passeContexte]);
+  const casPort = useMemo(() => bilan(horsMontant.filter((l) => (l.port ?? 0) > 0)), [horsMontant]);
+  const casFranco = useMemo(() => bilan(horsMontant.filter((l) => l.port === 0)), [horsMontant]);
+
+  const bandes = useMemo(
+    () => [
+      {
+        libelle: "Juste sous le franco",
+        de: franco - 80,
+        a: franco,
+        ...bilan(horsMontant.filter((l) => l.ht >= franco - 80 && l.ht < franco)),
+      },
+      {
+        libelle: "Juste au-dessus",
+        de: franco,
+        a: franco + 80,
+        ...bilan(horsMontant.filter((l) => l.ht >= franco && l.ht < franco + 80)),
+      },
+    ],
+    [horsMontant, franco],
+  );
+
+  const parTranche = useMemo(
+    () =>
+      TRANCHES.filter((t) => t.cle !== "tout").map((t) => {
+        const dans = horsMontant.filter((l) => l.ht >= t.de && l.ht < t.a);
+        return { ...t, paniers: dans.length, ...bilan(dans) };
       }),
-      { portHt: 0, ontVuLePort: 0, commandes: 0, abandons: 0 },
-    );
-  const casFranco = data?.cas.find((c) => c.portHt === 0);
-  const seuils = data?.seuils;
+    [horsMontant],
+  );
+
+  /** Le tableau, lui, suit TOUS les filtres, montant compris. */
+  const filtrees = useMemo(() => {
+    const out = lignes.filter((l) => passe(l));
+    const valeur = (l: LigneLivraison): string | number => {
+      switch (tri) {
+        case "at":
+          return l.commandeAt ?? l.at;
+        case "cp":
+          return l.cp ?? "";
+        case "ville":
+          return (l.ville ?? "").toLowerCase();
+        case "canal":
+          return l.canal.toLowerCase();
+        case "produit":
+          return l.produit.toLowerCase();
+        case "reste":
+          return Math.max(0, franco - l.ht);
+        case "statut":
+          return l.statut;
+        default:
+          return l.ht;
+      }
+    };
+    return [...out].sort((a, b) => {
+      const va = valeur(a);
+      const vb = valeur(b);
+      // 🪤 Les trous restent en FIN de liste dans les deux sens. Sans ça,
+      // inverser un tri par CP remonte d'abord les 84 paniers sans code postal
+      // — l'inverse de ce qu'on cherche en triant sur cette colonne.
+      const aVide = va === "";
+      const bVide = vb === "";
+      if (aVide !== bVide) return aVide ? 1 : -1;
+      return (va < vb ? -1 : va > vb ? 1 : 0) * sens;
+    });
+  }, [lignes, passe, tri, sens, franco]);
+
+  const bilanListe = useMemo(() => bilan(filtrees), [filtrees]);
+  const htEnPlan = useMemo(
+    () => filtrees.filter((l) => l.statut === "bloque" && !l.reprisAilleurs).reduce((s, l) => s + l.ht, 0),
+    [filtrees],
+  );
+  const identifiables = useMemo(() => {
+    const bloques = filtrees.filter((l) => l.statut === "bloque");
+    return { avecIdentite: bloques.filter((l) => l.identifie).length, total: bloques.length };
+  }, [filtrees]);
+
+  const trierPar = (cle: CleTri) => {
+    setSens(tri === cle ? (s) => (s === -1 ? 1 : -1) : () => -1);
+    setTri(cle);
+  };
+  const fleche = (cle: CleTri) => (tri === cle ? (sens === -1 ? " ↓" : " ↑") : "");
+
+  const filtresActifs = Boolean(fCanal || fJour || fQ || fStatut !== "bloque" || fTranche !== "50-200");
+
+  const colonnes: Array<{ cle: CleTri; label: string; align?: "right" }> = [
+    { cle: "at", label: "Date" },
+    { cle: "cp", label: "CP" },
+    { cle: "ville", label: "Ville" },
+    { cle: "canal", label: "Store" },
+    { cle: "produit", label: "Produit" },
+    { cle: "ht", label: "Total HT", align: "right" },
+    { cle: "reste", label: "Reste avant franco", align: "right" },
+    { cle: "statut", label: "Statut" },
+  ];
 
   return (
     <div className="space-y-6 p-4 md:p-6">
@@ -147,7 +323,7 @@ export default function LivraisonClient() {
           </div>
           <button
             type="button"
-            onClick={() => void charger(jours, tranche.de, tranche.a)}
+            onClick={() => void charger(jours)}
             className="rounded-lg border p-2 text-muted-foreground hover:text-foreground"
             aria-label="Rafraîchir"
           >
@@ -161,7 +337,7 @@ export default function LivraisonClient() {
         <strong>
           {seuils ? eur2(seuils.portTtc) : "14,40"} € TTC ({seuils?.portHt ?? 12} € HT)
         </strong>
-        , offert dès <strong>{seuils?.francoHt ?? 200} € HT</strong>. Tous les taux ci-dessous se comptent{" "}
+        , offert dès <strong>{franco} € HT</strong>. Les taux se comptent{" "}
         <strong>sur les paniers qui ont vu le prix du port</strong> — ceux qui sont partis avant ne peuvent pas avoir
         abandonné à cause de lui.
       </p>
@@ -175,29 +351,32 @@ export default function LivraisonClient() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Tile
           value={String(casPort.ontVuLePort)}
-          label="paniers ont vu le port payant"
+          label="ont vu le port payant"
           hint={`${casPort.commandes} ont commandé`}
         />
         <Tile
           value={pct(casPort.abandons, casPort.ontVuLePort)}
           label="repartent après l'avoir vu"
-          hint="hors demandes de devis"
+          hint="hors devis et paniers repris"
         />
         <Tile
-          value={pct(casFranco?.abandons ?? 0, casFranco?.ontVuLePort ?? 0)}
+          value={pct(casFranco.abandons, casFranco.ontVuLePort)}
           label="repartent malgré le franco"
-          hint={`${casFranco?.ontVuLePort ?? 0} paniers en livraison offerte`}
+          hint={`${casFranco.ontVuLePort} paniers en livraison offerte`}
         />
         <Tile
-          value={eur(data?.htBloque ?? 0)}
-          label={`HT en plan · ${tranche.label}`}
-          hint={
-            data && data.reprisDansLaListe > 0
-              ? `${data.bloques.length - data.reprisDansLaListe} abandons · ${data.reprisDansLaListe} repris ailleurs`
-              : `${data?.bloques.length ?? 0} paniers arrêtés à la livraison`
-          }
+          value={eur(htEnPlan)}
+          label="HT en plan · sélection"
+          hint={`${bilanListe.abandons} abandons${bilanListe.repris > 0 ? ` · ${bilanListe.repris} repris ailleurs` : ""}`}
         />
       </div>
+
+      <p className="text-muted-foreground text-xs">
+        Les trois premières tuiles et les deux panneaux ci-dessous suivent le store, le jour et la recherche, mais{" "}
+        <strong>ni le montant ni le statut</strong> : ce sont les deux dimensions qu&apos;ils comparent — filtrer sur «
+        Arrêté » leur retirerait toute commande, et sur 50-200 € toute ligne en franco. La quatrième tuile et le tableau
+        suivent, eux, la sélection complète.
+      </p>
 
       <div className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border bg-card p-4">
@@ -209,35 +388,28 @@ export default function LivraisonClient() {
             l&apos;essentiel de l&apos;écart.
           </p>
           <div className="space-y-3">
-            {(data?.bandes ?? []).map((b) => {
-              const maigre = b.ontVuLePort < EFFECTIF_MINIMAL;
-              return (
-                <div key={b.libelle}>
-                  <div className="mb-1 flex items-baseline justify-between text-sm">
-                    <span>
-                      {b.libelle}{" "}
-                      <span className="text-muted-foreground text-xs">
-                        {b.de}–{b.a} € HT
-                      </span>
+            {bandes.map((b) => (
+              <div key={b.libelle}>
+                <div className="mb-1 flex items-baseline justify-between text-sm">
+                  <span>
+                    {b.libelle}{" "}
+                    <span className="text-muted-foreground text-xs">
+                      {b.de}–{b.a} € HT
                     </span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {b.commandes}/{b.ontVuLePort} → {pct(b.commandes, b.ontVuLePort)}
-                    </span>
-                  </div>
-                  <Barre part={b.commandes} sur={Math.max(1, b.ontVuLePort)} />
-                  {maigre && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">
-                      {b.ontVuLePort} paniers : trop peu pour trancher (seuil {EFFECTIF_MINIMAL}).
-                    </p>
-                  )}
+                  </span>
+                  <span className="text-muted-foreground tabular-nums">
+                    {b.commandes}/{b.ontVuLePort} → {pct(b.commandes, b.ontVuLePort)}
+                  </span>
                 </div>
-              );
-            })}
+                <Barre part={b.commandes} sur={Math.max(1, b.ontVuLePort)} />
+                {b.ontVuLePort < EFFECTIF_MINIMAL && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {b.ontVuLePort} paniers : trop peu pour trancher (seuil {EFFECTIF_MINIMAL}).
+                  </p>
+                )}
+              </div>
+            ))}
           </div>
-          <p className="mt-3 border-t pt-3 text-muted-foreground text-xs">
-            Tant que les deux bandes restent sous {EFFECTIF_MINIMAL} paniers, cet écran ne peut ni confirmer ni écarter
-            un effet du port. Il se remplit tout seul : y revenir dans quelques mois.
-          </p>
         </div>
 
         <div className="rounded-lg border bg-card p-4">
@@ -245,7 +417,7 @@ export default function LivraisonClient() {
             Par tranche de montant
           </h2>
           <p className="mb-3 text-muted-foreground text-xs">
-            Conversion rapportée aux paniers arrivés jusqu&apos;au port.
+            Conversion rapportée aux paniers arrivés jusqu&apos;au port. Cliquer une ligne filtre l&apos;écran.
           </p>
           <table className="w-full text-sm">
             <thead>
@@ -258,9 +430,15 @@ export default function LivraisonClient() {
               </tr>
             </thead>
             <tbody>
-              {(data?.tranches ?? []).map((t) => (
-                <tr key={`${t.de}-${t.a}`} className="border-t">
-                  <td className="py-2">{t.a === null ? `${t.de} € +` : `${t.de} – ${t.a} €`}</td>
+              {parTranche.map((t) => (
+                <tr
+                  key={t.cle}
+                  onClick={() => setFTranche(fTranche === t.cle ? "tout" : t.cle)}
+                  className={`cursor-pointer border-t transition-colors hover:bg-muted/60 ${
+                    fTranche === t.cle ? "bg-muted" : ""
+                  }`}
+                >
+                  <td className="py-2">{t.label}</td>
                   <td className="py-2 text-right tabular-nums">{t.paniers}</td>
                   <td className="py-2 text-right tabular-nums">{t.ontVuLePort}</td>
                   <td className="py-2 text-right tabular-nums">{t.commandes}</td>
@@ -269,9 +447,9 @@ export default function LivraisonClient() {
               ))}
             </tbody>
           </table>
-          {data && data.nettoyage > 0 && (
+          {payload && payload.nettoyage > 0 && (
             <p className="mt-3 border-t pt-3 text-muted-foreground text-xs">
-              {data.nettoyage}
+              {payload.nettoyage}
               {
                 " paniers du robot de 6 h écartés de tout l'écran : anonymes, jamais convertis, ils feraient chuter chaque taux sans qu'aucun client n'ait rien abandonné."
               }
@@ -281,78 +459,141 @@ export default function LivraisonClient() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap rounded-lg border p-0.5">
-          {TRANCHES_LISTE.map((t) => (
-            <button
-              key={t.label}
-              type="button"
-              onClick={() => setTranche(t)}
-              className={`rounded-md px-3 py-1 text-sm ${
-                tranche.label === t.label
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {t.label}
-            </button>
+        <select
+          value={fCanal}
+          onChange={(e) => setFCanal(e.target.value)}
+          className="rounded-lg border bg-card px-3 py-1.5 text-sm"
+          aria-label="Filtrer par store"
+        >
+          <option value="">Tous les stores</option>
+          {canaux.map((c) => (
+            <option key={c}>{c}</option>
           ))}
-        </div>
+        </select>
+        <select
+          value={fTranche}
+          onChange={(e) => setFTranche(e.target.value)}
+          className="rounded-lg border bg-card px-3 py-1.5 text-sm"
+          aria-label="Filtrer par montant"
+        >
+          {TRANCHES.map((t) => (
+            <option key={t.cle} value={t.cle}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={fStatut}
+          onChange={(e) => setFStatut(e.target.value as StatutLivraison | "")}
+          className="rounded-lg border bg-card px-3 py-1.5 text-sm"
+          aria-label="Filtrer par statut"
+        >
+          <option value="">Tous les statuts</option>
+          {(Object.keys(STATUT_META) as StatutLivraison[]).map((s) => (
+            <option key={s} value={s}>
+              {STATUT_META[s].label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={fJour}
+          onChange={(e) => setFJour(e.target.value)}
+          className="rounded-lg border bg-card px-3 py-1.5 text-sm"
+          aria-label="Filtrer par jour"
+        >
+          <option value="">Tous les jours</option>
+          {joursDispo.map((j) => (
+            <option key={j} value={j}>
+              {new Date(`${j}T12:00:00`).toLocaleDateString("fr-FR", { day: "2-digit", month: "long" })}
+            </option>
+          ))}
+        </select>
+        <input
+          type="search"
+          value={fQ}
+          onChange={(e) => setFQ(e.target.value)}
+          placeholder="Produit, e-mail, CP, ville…"
+          className="min-w-52 flex-1 rounded-lg border bg-card px-3 py-1.5 text-sm"
+          aria-label="Recherche"
+        />
+        {filtresActifs && (
+          <button
+            type="button"
+            onClick={() => {
+              setFCanal("");
+              setFTranche("50-200");
+              setFStatut("bloque");
+              setFJour("");
+              setFQ("");
+            }}
+            className="rounded-lg border px-3 py-1.5 text-muted-foreground text-sm hover:text-foreground"
+          >
+            Réinitialiser
+          </button>
+        )}
         <span className="ml-auto text-muted-foreground text-sm tabular-nums">
-          {data?.bloques.length ?? 0} paniers arrêtés à la livraison
+          {filtrees.length} / {lignes.length} paniers
         </span>
       </div>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
-        <table className="w-full min-w-[820px] border-collapse text-sm">
+        <table className="w-full min-w-[900px] border-collapse text-sm">
           <thead>
             <tr className="border-b text-left text-muted-foreground text-xs uppercase tracking-wide">
-              <th className="px-3 py-2.5">Date</th>
-              <th className="px-3 py-2.5">CP</th>
-              <th className="px-3 py-2.5">Ville</th>
-              <th className="px-3 py-2.5">Canal</th>
-              <th className="px-3 py-2.5">Produit</th>
-              <th className="px-3 py-2.5">Email</th>
-              <th className="px-3 py-2.5 text-right">Total HT</th>
-              <th className="px-3 py-2.5 text-right">Reste avant franco</th>
-              <th className="px-3 py-2.5">Suite</th>
+              {colonnes.map((c) => (
+                <th
+                  key={c.cle}
+                  onClick={() => trierPar(c.cle)}
+                  className={`cursor-pointer select-none px-3 py-2.5 hover:text-foreground ${
+                    c.align === "right" ? "text-right" : ""
+                  } ${tri === c.cle ? "text-foreground" : ""}`}
+                >
+                  {c.label}
+                  {fleche(c.cle)}
+                </th>
+              ))}
+              <th className="px-3 py-2.5">E-mail</th>
             </tr>
           </thead>
           <tbody>
-            {(data?.bloques ?? []).map((b) => (
-              <tr key={b.id} className="border-b last:border-b-0 hover:bg-muted/40">
+            {filtrees.map((l) => (
+              <tr key={l.id} className="border-b last:border-b-0 hover:bg-muted/40">
                 <td className="whitespace-nowrap px-3 py-2 text-muted-foreground tabular-nums">
-                  {dateFmt.format(new Date(b.at))}
+                  {dateFmt.format(new Date(l.commandeAt ?? l.at))}
                 </td>
-                <td className="px-3 py-2 tabular-nums">{b.cp ?? "—"}</td>
-                <td className="max-w-40 truncate px-3 py-2">{b.ville ?? "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2">{b.canal.replace("Pro ", "P. ")}</td>
+                <td className="px-3 py-2 tabular-nums">{l.cp ?? "—"}</td>
+                <td className="max-w-40 truncate px-3 py-2">{l.ville ?? "—"}</td>
+                <td className="whitespace-nowrap px-3 py-2">{l.canal.replace("Pro ", "P. ")}</td>
                 <td className="max-w-72 truncate px-3 py-2">
-                  {b.produit}
-                  {b.lignes > 1 && <span className="text-muted-foreground text-xs"> +{b.lignes - 1} art.</span>}
+                  {l.produit}
+                  {l.lignes > 1 && <span className="text-muted-foreground text-xs"> +{l.lignes - 1} art.</span>}
                 </td>
-                <td className="max-w-52 truncate px-3 py-2 text-muted-foreground">{b.email ?? "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{eur2(b.ht)}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">{eur2(l.ht)}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
-                  {b.resteAvantFranco > 0 ? `${eur2(b.resteAvantFranco)} €` : "—"}
+                  {l.ht < franco ? `${eur2(franco - l.ht)} €` : "—"}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2">
-                  {b.reprisAilleurs ? (
+                  <span
+                    className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 font-semibold text-[11px] ${STATUT_META[l.statut].chip}`}
+                  >
+                    {STATUT_META[l.statut].label}
+                  </span>
+                  {l.reprisAilleurs && l.statut === "bloque" && (
                     <span
                       title="Ce client a commandé ensuite par un autre panier : ce n'est pas un abandon."
-                      className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-[11px] text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                      className="ml-1.5 inline-block rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-[11px] text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
                     >
-                      commandé ailleurs
+                      repris
                     </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
                   )}
                 </td>
+                <td className="max-w-52 truncate px-3 py-2 text-muted-foreground">{l.email ?? "—"}</td>
               </tr>
             ))}
-            {data && data.bloques.length === 0 && !chargement && (
+            {!chargement && filtrees.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground text-sm">
-                  Aucun panier arrêté à la livraison sur cette tranche et cette fenêtre.
+                  Aucun panier sur cette sélection.
                 </td>
               </tr>
             )}
@@ -360,21 +601,17 @@ export default function LivraisonClient() {
         </table>
       </div>
 
-      {data && (
+      {payload && (
         <p className="text-muted-foreground text-xs">
-          Actualisé {dateFmt.format(new Date(data.generatedAt))} · fenêtre {data.jours} j · un panier « arrêté à la
-          livraison » a choisi une méthode de livraison, puis ni payé ni demandé de devis
-          {data.reprisDansLaListe > 0 &&
-            ` — ${data.reprisDansLaListe} de cette liste ont été repris ailleurs et sortent des taux et du HT en plan`}
-          .{" "}
-          {data.identifiables.total > 0 && (
+          Actualisé {dateFmt.format(new Date(payload.generatedAt))} · fenêtre {payload.jours} j · « Arrêté » = une
+          méthode de livraison choisie, puis ni paiement ni devis.{" "}
+          {identifiables.total > 0 && (
             <>
-              La reprise ne se voit que sur les paniers identifiés :{" "}
+              La reprise sur un autre panier ne se voit que sur les paniers identifiés :{" "}
               <strong>
-                {data.identifiables.avecIdentite} sur {data.identifiables.total}
+                {identifiables.avecIdentite} sur {identifiables.total}
               </strong>{" "}
-              portent un e-mail ou un compte. Sur les autres, un client revenu par un second panier est invisible — le
-              compte des repris est un plancher, jamais un total.
+              portent un e-mail ou un compte. Sur les autres elle est invisible — le compte des repris est un plancher.
             </>
           )}
         </p>
