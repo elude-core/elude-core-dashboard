@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { exclureE2e, exclureInternes } from "@/lib/exclusions";
 import { medusaDb } from "@/lib/medusa-db";
 
 export const dynamic = "force-dynamic";
@@ -13,9 +14,9 @@ export const dynamic = "force-dynamic";
  * commande > devis (table quote du module custom, jointe sur cart_id) >
  * paiement > livraison > identifié > panier.
  *
- * Exclusions héritées de l'audit du 25/08 (cf. memory purge paniers e2e) :
- *   - metadata.e2e = 'true' (paniers Playwright, tagués par le storefront)
- *   - emails %@elude.fr (paniers de QA authentifiée / internes)
+ * Exclusions : voir `lib/exclusions.ts` — paniers Playwright (`metadata.e2e`),
+ * `@elude.fr`, et les adresses personnelles de l'équipe. Une seule liste pour
+ * tout le dashboard, sinon deux écrans comptent deux populations.
  * Cache serveur 30 s par fenêtre. Montants Medusa en euros HT (pas centimes).
  */
 
@@ -105,8 +106,8 @@ JOIN cart_line_item li ON li.cart_id = c.id AND li.deleted_at IS NULL
 WHERE (c.created_at >= now() - make_interval(days => $1)
        OR c.completed_at >= now() - make_interval(days => $1))
   AND c.deleted_at IS NULL
-  AND (c.metadata IS NULL OR c.metadata->>'e2e' IS NULL)
-  AND (c.email IS NULL OR c.email NOT ILIKE '%@elude.fr')
+  AND ${exclureE2e("c")}
+  AND ${exclureInternes("c.email")}
 GROUP BY c.id, sc.name
 ORDER BY c.created_at DESC
 `;

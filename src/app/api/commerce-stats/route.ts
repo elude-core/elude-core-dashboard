@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { exclureE2e, exclureInternes } from "@/lib/exclusions";
 import { medusaDb } from "@/lib/medusa-db";
 
 export const runtime = "nodejs";
@@ -55,6 +56,16 @@ export const dynamic = "force-dynamic";
  *
  * Un devis, lui, n'a pas de total propre : il pointe un panier. Son montant se
  * lit sur `cart_line_item`, comme l'écran /paniers le fait déjà.
+ *
+ * ── 🪤 Cette route ne filtrait AUCUN compte interne ─────────────────────────
+ *
+ * Elle comptait les commandes de test de l'équipe pendant que /paniers les
+ * écartait déjà : deux écrans voisins, deux populations, rien pour le dire.
+ * Les exclusions passent maintenant par `lib/exclusions.ts`, seule liste du
+ * dépôt. Effet mesuré le 07/09 sur le CA : 1,63 € HT sur 24 158 € — dix des
+ * onze commandes internes étaient annulées ou en brouillon, donc déjà hors du
+ * total. L'écart est ailleurs : sur les PANIERS, où ces comptes portent dix des
+ * quatre-vingt-dix-neuf conversions.
  *
  * ── Pourquoi moyenne ET médiane, jamais l'une seule ─────────────────────────
  *
@@ -232,6 +243,7 @@ FROM (
     ) AS deja_client
   FROM "order" o
   WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+    AND ${exclureInternes("o.email")}
     AND o.created_at >= now() - make_interval(days => $1)
     AND o.created_at <  now() - make_interval(days => $2)
 ) t
@@ -248,7 +260,12 @@ FROM (
       FROM cart_line_item li WHERE li.cart_id = q.cart_id AND li.deleted_at IS NULL
   ) AS ht
   FROM quote q
+  -- 🪤 LEFT JOIN, pas JOIN : un devis dont le panier a disparu doit rester
+  -- compté, sinon le total des devis baisse sans qu'aucune exclusion ne le
+  -- justifie.
+  LEFT JOIN cart c ON c.id = q.cart_id
   WHERE q.deleted_at IS NULL
+    AND (c.id IS NULL OR (${exclureInternes("c.email")} AND ${exclureE2e("c")}))
     AND q.created_at >= now() - make_interval(days => $1)
     AND q.created_at <  now() - make_interval(days => $2)
 ) t
@@ -260,6 +277,7 @@ SELECT sc.name AS canal, count(*)::int AS commandes,
   FROM "order" o
   JOIN sales_channel sc ON sc.id = o.sales_channel_id
  WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+   AND ${exclureInternes("o.email")}
    AND o.created_at >= now() - make_interval(days => $1)
    AND o.created_at <  now() - make_interval(days => $2)
  GROUP BY sc.name ORDER BY ca_ht DESC
@@ -285,6 +303,7 @@ WITH bornes AS (
          )::date AS debut
     FROM "order" o
    WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+     AND ${exclureInternes("o.email")}
 ), jours AS (
   SELECT generate_series(
            COALESCE(b.debut, (now() AT TIME ZONE 'Europe/Paris')::date),
@@ -297,6 +316,7 @@ WITH bornes AS (
          sum(${HT_COMMANDE}) AS ht
     FROM "order" o
    WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+     AND ${exclureInternes("o.email")}
    GROUP BY 1
 ), par_canal AS (
   SELECT date_trunc('day', o.created_at AT TIME ZONE 'Europe/Paris')::date AS jour,
@@ -305,6 +325,7 @@ WITH bornes AS (
     FROM "order" o
     JOIN sales_channel sc ON sc.id = o.sales_channel_id
    WHERE o.deleted_at IS NULL AND o.canceled_at IS NULL AND o.is_draft_order = false
+     AND ${exclureInternes("o.email")}
    GROUP BY 1, 2
 ), canaux_du_jour AS (
   SELECT jour, jsonb_object_agg(canal, ht) AS canaux FROM par_canal GROUP BY jour
@@ -315,7 +336,9 @@ WITH bornes AS (
                       FROM cart_line_item li
                      WHERE li.cart_id = q.cart_id AND li.deleted_at IS NULL)), 2) AS ht
     FROM quote q
+    LEFT JOIN cart c ON c.id = q.cart_id
    WHERE q.deleted_at IS NULL
+     AND (c.id IS NULL OR (${exclureInternes("c.email")} AND ${exclureE2e("c")}))
    GROUP BY 1
 )
 SELECT to_char(j.jour, 'YYYY-MM-DD') AS jour,
@@ -396,7 +419,8 @@ export async function GET() {
       Promise.all(FENETRES.map((j) => fenetre(j * 2, j))),
       medusaDb().query<{ depuis: Date | null }>(
         `SELECT min(created_at) AS depuis FROM "order"
-          WHERE deleted_at IS NULL AND canceled_at IS NULL AND is_draft_order = false`,
+          WHERE deleted_at IS NULL AND canceled_at IS NULL AND is_draft_order = false
+            AND ${exclureInternes("email")}`,
       ),
       medusaDb().query<LigneTimeline>(SQL_TIMELINE),
     ]);
