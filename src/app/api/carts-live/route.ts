@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { exclureE2e, exclureInternes } from "@/lib/exclusions";
+import { exclureE2e, exclureInternes, exclureRobots } from "@/lib/exclusions";
 import { medusaDb } from "@/lib/medusa-db";
 
 export const dynamic = "force-dynamic";
@@ -53,6 +53,16 @@ export interface CartRow {
   /** Code postal saisi pour l'estimation des fdp (metadata, posé par le
    *  storefront à la saisie — couvre les paniers en cours après #1174). */
   cp: string | null;
+  /** Appareil du PREMIER ajout — `mobile`, `tablet`, ou `ordinateur`
+   *  (storefront#1189). ⚠️ `null` sur tout panier antérieur : c'est une
+   *  capture, pas un calcul rétroactif. */
+  device: string | null;
+  /** Système : `iOS`, `Android`, `Windows`, `macOS`… Même couverture. */
+  deviceOs: string | null;
+  /** D'où part le PREMIER ajout : `pdp_barre`, `pdp_variantes`,
+   *  `pdp_buy_with`, `commande_rapide`, `recommande`, `deja_achete`.
+   *  C'est la seule mesure de ce que produit le contenu éditorial. */
+  surface: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -85,6 +95,9 @@ SELECT
   (SELECT min(q.created_at) FROM quote q WHERE q.cart_id = c.id AND q.deleted_at IS NULL) AS devis_at,
   c.metadata->>'click_type' AS click_type,
   c.metadata->>'shipping_postal_code' AS cp,
+  c.metadata->>'device_type' AS device,
+  c.metadata->>'device_os' AS device_os,
+  c.metadata->>'add_surface' AS surface,
   sc.name AS canal,
   c.email,
   count(li.id)::int AS lignes,
@@ -107,6 +120,7 @@ WHERE (c.created_at >= now() - make_interval(days => $1)
        OR c.completed_at >= now() - make_interval(days => $1))
   AND c.deleted_at IS NULL
   AND ${exclureE2e("c")}
+  AND ${exclureRobots("c")}
   AND ${exclureInternes("c.email")}
 GROUP BY c.id, sc.name
 ORDER BY c.created_at DESC
@@ -119,6 +133,9 @@ interface RawRow {
   devis_at: Date | null;
   click_type: string | null;
   cp: string | null;
+  device: string | null;
+  device_os: string | null;
+  surface: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -153,6 +170,9 @@ export async function GET(request: Request) {
         source: (r.click_type ? "ads" : "site") as CartRow["source"],
         clickType: r.click_type,
         cp: r.cp,
+        device: r.device,
+        deviceOs: r.device_os,
+        surface: r.surface,
         canal: r.canal,
         email: r.email,
         lignes: r.lignes,
