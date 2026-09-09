@@ -90,107 +90,119 @@ export function IndexChart(props: { months: string[]; rows: MonthRow[]; mode: "w
     fins[1].y = fins[0].y + 13;
   }
 
-  const anneesVisibles = ["2023", "2024", "2025", "2026"]
-    .map((yy) => ({ yy, i: months.findIndex((m) => m.startsWith(yy)) }))
-    .filter((a) => a.i >= 0);
+  // Dérivées de `months`, jamais une plage écrite en dur : SeriesChart reçoit le même
+  // `months` et est empilé juste en dessous sur la page — deux listes à la main finissent
+  // par diverger et affichent alors deux axes différents pour la même série.
+  const anneesVisibles = [...new Set(months.map((m) => m.slice(0, 4)))].map((yy) => ({
+    yy,
+    i: months.findIndex((m) => m.startsWith(yy)),
+  }));
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      role="img"
-      aria-label={`${mesure.label} : CA et nombre de commandes ramenés en base 100 sur le mois moyen de 2025`}
-    >
-      {graduations.map((v) => (
-        <g key={v}>
-          <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} className="gridline" stroke="var(--border)" strokeWidth={1} />
-          {/* le repère 1× a déjà sa propre étiquette explicite juste en dessous — pas de doublon ici */}
-          {v !== 100 && (
-            <text x={L - 8} y={y(v) + 3.5} textAnchor="end" fontSize={10.5} fill="var(--muted-foreground)">
-              {(v / 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}×
-            </text>
-          )}
-        </g>
-      ))}
+    // Motif repris de PaniersClient.tsx (tableau) : conteneur à défilement horizontal +
+    // largeur minimale sur l'élément large, plutôt que de laisser le SVG (sans intrinsèque
+    // largeur/hauteur, il se contente de remplir son conteneur) s'écraser sur mobile — à
+    // ~330 px utiles le texte à fontSize 10.5 tombe à ~3,5 px, illisible. La largeur
+    // minimale reprend W : le SVG rend alors ses unités 1:1, comme sur un desktop actuel.
+    <div className="overflow-x-auto">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        role="img"
+        aria-label={`${mesure.label} : CA et nombre de commandes ramenés en base 100 sur le mois moyen de 2025`}
+        className="min-w-[1000px]"
+      >
+        {graduations.map((v) => (
+          <g key={v}>
+            <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} className="gridline" stroke="var(--border)" strokeWidth={1} />
+            {/* le repère 1× a déjà sa propre étiquette explicite juste en dessous — pas de doublon ici */}
+            {v !== 100 && (
+              <text x={L - 8} y={y(v) + 3.5} textAnchor="end" fontSize={10.5} fill="var(--muted-foreground)">
+                {(v / 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}×
+              </text>
+            )}
+          </g>
+        ))}
 
-      {/* repère base 1× */}
-      <line
-        x1={L}
-        x2={W - R}
-        y1={y(100)}
-        y2={y(100)}
-        stroke="var(--muted-foreground)"
-        strokeWidth={1}
-        strokeDasharray="4 3"
-      />
-      <text x={L + 2} y={T - 8} fontSize={10.5} fill="var(--muted-foreground)">
-        × le mois moyen de 2025 · ligne pointillée = 1× = {eur(Math.round(baseCA))} / {Math.round(baseNB)} cdes
-      </text>
+        {/* repère base 1× */}
+        <line
+          x1={L}
+          x2={W - R}
+          y1={y(100)}
+          y2={y(100)}
+          stroke="var(--muted-foreground)"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+        />
+        <text x={L + 2} y={T - 8} fontSize={10.5} fill="var(--muted-foreground)">
+          × le mois moyen de 2025 · ligne pointillée = 1× = {eur(Math.round(baseCA))} / {Math.round(baseNB)} cdes
+        </text>
 
-      {/* Écart entre les deux courbes — c'est le propos du graphique (l'écart entre
+        {/* Écart entre les deux courbes — c'est le propos du graphique (l'écart entre
           montant et volume), pas un simple fond : `--mes-ecart` est un token dédié et
           opaque dans les deux thèmes (déclaré à côté de `--mes-ca`/`--mes-nb` dans
           globals.css). `--border` ne convient pas ici : en thème sombre il porte déjà
           10 % d'alpha, et une aire censée porter le propos du graphique disparaissait
           (10 % × 0,5 = 5 % de blanc sur fond sombre, invisible). */}
-      <path
-        d={`${idxCA.map((v, i) => `${i ? "L" : "M"} ${x(i)} ${y(v)}`).join(" ")} ${idxNB
-          .map((_v, i) => `L ${x(n - 1 - i)} ${y(idxNB[n - 1 - i])}`)
-          .join(" ")} Z`}
-        fill="var(--mes-ecart)"
-        fillOpacity={0.5}
-        stroke="none"
-      />
+        <path
+          d={`${idxCA.map((v, i) => `${i ? "L" : "M"} ${x(i)} ${y(v)}`).join(" ")} ${idxNB
+            .map((_v, i) => `L ${x(n - 1 - i)} ${y(idxNB[n - 1 - i])}`)
+            .join(" ")} Z`}
+          fill="var(--mes-ecart)"
+          fillOpacity={0.5}
+          stroke="none"
+        />
 
-      {series.map((s) => (
-        <g key={s.label}>
-          <path
-            d={s.valeurs
-              .slice(0, n - 1)
-              .map((v, i) => `${i ? "L" : "M"} ${x(i)} ${y(v)}`)
-              .join(" ")}
-            fill="none"
-            stroke={s.couleur}
-            strokeWidth={2}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-          <path
-            d={`M ${x(n - 2)} ${y(s.valeurs[n - 2])} L ${x(n - 1)} ${y(s.valeurs[n - 1])}`}
-            fill="none"
-            stroke={s.couleur}
-            strokeWidth={2}
-            strokeDasharray="3 3"
-            strokeLinecap="round"
-          />
-          <circle
-            cx={x(n - 1)}
-            cy={y(s.valeurs[n - 1])}
-            r={4}
-            fill={s.couleur}
-            stroke="var(--background)"
-            strokeWidth={2}
-          />
-        </g>
-      ))}
-      {fins.map((f) => (
-        <text key={f.label} x={x(n - 1) + 9} y={f.y + 4} fontSize={11} fontWeight={500} fill={f.couleur}>
-          {f.label}
-        </text>
-      ))}
+        {series.map((s) => (
+          <g key={s.label}>
+            <path
+              d={s.valeurs
+                .slice(0, n - 1)
+                .map((v, i) => `${i ? "L" : "M"} ${x(i)} ${y(v)}`)
+                .join(" ")}
+              fill="none"
+              stroke={s.couleur}
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            <path
+              d={`M ${x(n - 2)} ${y(s.valeurs[n - 2])} L ${x(n - 1)} ${y(s.valeurs[n - 1])}`}
+              fill="none"
+              stroke={s.couleur}
+              strokeWidth={2}
+              strokeDasharray="3 3"
+              strokeLinecap="round"
+            />
+            <circle
+              cx={x(n - 1)}
+              cy={y(s.valeurs[n - 1])}
+              r={4}
+              fill={s.couleur}
+              stroke="var(--background)"
+              strokeWidth={2}
+            />
+          </g>
+        ))}
+        {fins.map((f) => (
+          <text key={f.label} x={x(n - 1) + 9} y={f.y + 4} fontSize={11} fontWeight={500} fill={f.couleur}>
+            {f.label}
+          </text>
+        ))}
 
-      {anneesVisibles.map(({ yy, i }) => (
-        <text key={yy} x={x(i)} y={H - B + 18} textAnchor="start" fontSize={10.5} fill="var(--muted-foreground)">
-          {yy}
-        </text>
-      ))}
+        {anneesVisibles.map(({ yy, i }) => (
+          <text key={yy} x={x(i)} y={H - B + 18} textAnchor="start" fontSize={10.5} fill="var(--muted-foreground)">
+            {yy}
+          </text>
+        ))}
 
-      {rows.map((r, i) => (
-        <rect key={months[i]} x={x(i) - step / 2} y={T} width={step} height={H - T - B} fill="transparent">
-          <title>
-            {`${libelleMois(months[i])} — ${mesure.label.toLowerCase()}\nMontant : ${eur(mesure.ca(r))} (${fmtIndice(idxCA[i])})\nCommandes : ${mesure.nb(r)} (${fmtIndice(idxNB[i])})`}
-          </title>
-        </rect>
-      ))}
-    </svg>
+        {rows.map((r, i) => (
+          <rect key={months[i]} x={x(i) - step / 2} y={T} width={step} height={H - T - B} fill="transparent">
+            <title>
+              {`${libelleMois(months[i])} — ${mesure.label.toLowerCase()}\nMontant : ${eur(mesure.ca(r))} (${fmtIndice(idxCA[i])})\nCommandes : ${mesure.nb(r)} (${fmtIndice(idxNB[i])})`}
+            </title>
+          </rect>
+        ))}
+      </svg>
+    </div>
   );
 }
