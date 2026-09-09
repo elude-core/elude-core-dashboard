@@ -39,3 +39,26 @@ describe("VentesClient — placement du sélecteur de flux", () => {
     expect(carteIndex?.querySelector('fieldset[aria-label="Filtrer par boutique"]')).toBeNull();
   });
 });
+
+describe("VentesClient — libellés de flux", () => {
+  // « hors web » = toutes les commandes non reconnues comme web, pas seulement les devis
+  // transformés (80 % seulement en viennent). Le libellé « Devis-hors web » contredisait
+  // le titre « Ventes hors web » du graphique juste en dessous.
+  it("nomme le flux « Hors web », jamais « Devis »", () => {
+    render(<VentesClient snapshot={snapshot} ageHours={1} />);
+    const flux = screen.getByRole("group", { name: "Flux" });
+    expect(flux.textContent).toContain("Hors web");
+    expect(flux.textContent).not.toMatch(/devis/i);
+  });
+});
+
+describe("VentesClient — filtres portés par l'URL", () => {
+  // `useSearchParams()` rend `null` hors contexte de routeur : le composant doit rendre
+  // avec ses valeurs par défaut plutôt que de jeter (le type Next le déclare non-nullable,
+  // donc ni TS ni la revue de diff ne l'auraient signalé — seul le rendu le prouve).
+  it("rend sans routeur, sur les valeurs par défaut", () => {
+    render(<VentesClient snapshot={snapshot} ageHours={1} />);
+    expect(screen.getByRole("button", { name: "Web" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Hors web" })).toHaveAttribute("aria-pressed", "false");
+  });
+});

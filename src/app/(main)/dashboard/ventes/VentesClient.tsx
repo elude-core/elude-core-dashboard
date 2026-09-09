@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+
+import { useSearchParams } from "next/navigation";
 
 import { DegradedBanner } from "@/components/elude/DegradedBanner";
 import { KpiCard } from "@/components/elude/KpiCard";
@@ -13,11 +15,24 @@ import { aggregate, type VentesSnapshot } from "@/lib/ventes";
 
 type Mode = "web" | "hors" | "tout";
 
+// « Hors web » et non « Devis-hors web » : hors web = TOUTES les commandes qui ne sont pas
+// reconnues comme web (par `client_order_ref`), pas seulement celles nées d'un devis. Mesuré
+// le 09/09/2026 : sur 2 356 ventes hors web, 1 887 viennent d'un devis envoyé (80 %) mais
+// 495 n'en ont jamais eu — et 114 ventes web en ont eu un. Le libellé précédent rouvrait la
+// confusion, et contredisait le titre « Ventes hors web » du graphique juste en dessous.
 const FLUX: { mode: Mode; label: string }[] = [
   { mode: "web", label: "Web" },
-  { mode: "hors", label: "Devis-hors web" },
+  { mode: "hors", label: "Hors web" },
   { mode: "tout", label: "Tout" },
 ];
+
+/** Filtres portés par l'URL — une vue filtrée se partage et se recharge à l'identique. */
+const PARAM_STORES = "boutiques";
+const PARAM_FLUX = "flux";
+
+function estMode(v: string | null): v is Mode {
+  return v === "web" || v === "hors" || v === "tout";
+}
 
 /** Au-delà, le cron nocturne (push_snapshot.py) n'a vraisemblablement pas tourné. */
 const SEUIL_STALE_HEURES = 30;
@@ -50,13 +65,61 @@ export default function VentesClient({
   snapshot: VentesSnapshot | null;
   ageHours: number | null;
 }) {
+  const stores = useMemo(() => (snapshot ? Object.keys(snapshot.stores).sort() : []), [snapshot]);
+
   // Données déjà en mémoire (lues côté serveur dans page.tsx, un instantané nocturne ne
   // change qu'une fois par nuit — pas de fetch client, pas de flash "Chargement…" à chaque
   // ouverture). `VentesClient` ne porte plus que l'état des filtres, du calcul pur.
-  const [selected, setSelected] = useState<string[]>([]);
-  const [mode, setMode] = useState<Mode>("web");
+  //
+  // L'état initial vient de l'URL : une vue filtrée doit pouvoir se coller dans un message
+  // et se rouvrir telle quelle. Les valeurs sont VALIDÉES contre l'instantané — une URL
+  // bricolée à la main ne doit pas produire une sélection fantôme qui n'agrège rien en
+  // silence (`aggregate` ignore un store inconnu, la page paraîtrait vide sans raison).
+  //
+  // 🪤 `useSearchParams()` rend `null` hors contexte de routeur — c'est le cas des tests
+  // unitaires, qui montent le composant nu. Le type Next le déclare non-nullable, donc rien
+  // ne l'aurait signalé avant l'exécution : d'où le cast explicite et le `?.` qui suit.
+  const params = useSearchParams() as ReturnType<typeof useSearchParams> | null;
+  const [selected, setSelected] = useState<string[]>(() => {
+    const brut = params?.get(PARAM_STORES);
+    if (!brut) return [];
+    return brut.split(",").filter((s) => stores.includes(s));
+  });
+  const [mode, setMode] = useState<Mode>(() => {
+    const m = params?.get(PARAM_FLUX) ?? null;
+    return estMode(m) ? m : "web";
+  });
 
-  const stores = useMemo(() => (snapshot ? Object.keys(snapshot.stores).sort() : []), [snapshot]);
+  // `history.replaceState` plutôt que `router.replace` : la page est en `force-dynamic`,
+  // une navigation Next repartirait au serveur relire Redis pour un changement qui est
+  // purement client. On ne pousse pas non plus d'entrée d'historique — cliquer cinq
+  // boutiques puis « Précédent » doit ramener à la page d'avant, pas rejouer les cinq clics.
+  const majUrl = useCallback((boutiques: string[], flux: Mode) => {
+    if (typeof window === "undefined") return;
+    const p = new URLSearchParams(window.location.search);
+    if (boutiques.length > 0) p.set(PARAM_STORES, boutiques.join(","));
+    else p.delete(PARAM_STORES);
+    if (flux !== "web") p.set(PARAM_FLUX, flux);
+    else p.delete(PARAM_FLUX);
+    const qs = p.toString();
+    window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+  }, []);
+
+  const changerBoutiques = useCallback(
+    (b: string[]) => {
+      setSelected(b);
+      majUrl(b, mode);
+    },
+    [majUrl, mode],
+  );
+
+  const changerFlux = useCallback(
+    (m: Mode) => {
+      setMode(m);
+      majUrl(selected, m);
+    },
+    [majUrl, selected],
+  );
   const rows = useMemo(() => (snapshot ? aggregate(snapshot, selected) : []), [snapshot, selected]);
   // Repères de bascule filtrés sur la sélection : le go-live d'une boutique qu'on
   // n'affiche pas n'a rien à faire sur le graphique (ex. filtrer sur pro-agrafeuses,
@@ -138,7 +201,7 @@ export default function VentesClient({
         />
       </div>
 
-      <StoreFilter stores={stores} selected={selected} onChange={setSelected} />
+      <StoreFilter stores={stores} selected={selected} onChange={changerBoutiques} />
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -155,7 +218,7 @@ export default function VentesClient({
                 type="button"
                 variant={mode === f.mode ? "secondary" : "outline"}
                 aria-pressed={mode === f.mode}
-                onClick={() => setMode(f.mode)}
+                onClick={() => changerFlux(f.mode)}
               >
                 {f.label}
               </Button>
