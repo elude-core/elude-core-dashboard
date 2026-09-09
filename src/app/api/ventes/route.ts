@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { readSnapshot } from "@/lib/ventes";
+import { readSnapshot } from "@/lib/ventes.server";
 
 export const dynamic = "force-dynamic";
 

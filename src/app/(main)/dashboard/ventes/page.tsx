@@ -1,4 +1,4 @@
-import { readSnapshot } from "@/lib/ventes";
+import { readSnapshot } from "@/lib/ventes.server";
 
 import VentesClient from "./VentesClient";
 
