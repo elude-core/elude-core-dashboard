@@ -19,13 +19,42 @@ import { eur, libelleMois } from "./format";
  * textuelle : un pointillé seul ne se décode pas assez vite.
  */
 
-/** Graduation "ronde" juste au-dessus de v (1×, 1,25×, 1,5×, 2×, 2,5×... × 10^k). */
-function niceMax(v: number): number {
-  if (!(v > 0)) return 1;
-  const p = 10 ** Math.floor(Math.log10(v));
-  const paliers = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
-  for (const k of paliers) if (k * p >= v) return k * p;
-  return 10 * p;
+/**
+ * Échelle dont TOUTES les graduations sont rondes, pas seulement le maximum :
+ * on choisit d'abord le PAS parmi des valeurs rondes, puis le maximum comme un
+ * multiple de ce pas.
+ *
+ * 🪤 Un `niceMax` seul ne suffit pas — c'est le piège corrigé ici. Il rendait
+ * bien un maximum rond (125 pour un pic à 121), mais les graduations
+ * intermédiaires en découlaient par division : l'axe « hors web · nombre de
+ * commandes » affichait **0 / 63 / 125** (63 = 62,5 arrondi) quand l'axe jumeau
+ * juste au-dessus faisait 0 / 40 / 80. Même défaut, plus grave, sur l'axe CA dès
+ * qu'on filtre sur une petite boutique : un maximum de 2 000 € donnait cinq
+ * graduations affichées « 0 · 1k € · 1k € · 2k € · 2k € » — deux doublons.
+ *
+ * `pas` exclut 2,5 quand l'axe compte des entiers (`entier`), sinon une échelle
+ * de 0 à 5 commandes graduerait tous les 2,5.
+ */
+function echelleRonde(vmax: number, intervalles: number, entier: boolean): { max: number; ticks: number[] } {
+  if (!(vmax > 0)) return { max: 1, ticks: [0, 1] };
+  const p = 10 ** Math.floor(Math.log10(vmax / intervalles));
+  const paliers = entier ? [1, 2, 5, 10] : [1, 2, 2.5, 5, 10];
+  const pas = paliers.map((k) => k * p).find((s) => Math.ceil(vmax / s) <= intervalles) ?? 10 * p;
+  const max = pas * Math.ceil(vmax / pas);
+  const ticks: number[] = [];
+  for (let t = 0; t <= max + pas / 1000; t += pas) ticks.push(t);
+  return { max, ticks };
+}
+
+/**
+ * Étiquette d'un montant sur l'axe CA. L'unité suit l'échelle plutôt que d'être
+ * figée en milliers : sous 10 000 €, `Math.round(v / 1000)` écrasait toutes les
+ * graduations sur « 0 » et « 1k € ».
+ */
+function montantAxe(v: number, max: number): string {
+  if (v === 0) return "0";
+  if (max < 10_000) return `${Math.round(v).toLocaleString("fr-FR")} €`;
+  return `${(v / 1000).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}k €`;
 }
 
 interface Bloc {
@@ -113,10 +142,12 @@ export function SeriesChart(props: {
         )}
         {BLOCS.map((bloc, bi) => {
           const y0 = T + bi * (BH + BLOC);
-          const maxCA = niceMax(Math.max(...rows.map(bloc.ca)));
+          const echCA = echelleRonde(Math.max(...rows.map(bloc.ca)), 4, false);
+          const maxCA = echCA.max;
           const yCA = (v: number) => y0 + CA - (v / maxCA) * CA;
           const vy0 = y0 + CA + INNER;
-          const maxV = niceMax(Math.max(...rows.map(bloc.vol)));
+          const echV = echelleRonde(Math.max(...rows.map(bloc.vol)), 2, true);
+          const maxV = echV.max;
           const yV = (v: number) => vy0 + VOL - (v / maxV) * VOL;
           const bw = Math.max(3, step * 0.56);
 
@@ -136,11 +167,11 @@ export function SeriesChart(props: {
             <g key={bloc.name}>
               {/* --- panneau CA : aire + ligne --- */}
               {showBand && bandX !== null && <rect x={bandX} y={y0} width={bandW} height={CA} fill="var(--muted)" />}
-              {Array.from({ length: 5 }, (_, g) => (maxCA * g) / 4).map((v, g) => (
+              {echCA.ticks.map((v) => (
                 <g key={v}>
                   <line x1={L} x2={W - R} y1={yCA(v)} y2={yCA(v)} stroke="var(--border)" strokeWidth={1} />
                   <text x={L - 8} y={yCA(v) + 3.5} textAnchor="end" fontSize={10.5} fill="var(--muted-foreground)">
-                    {g ? `${Math.round(v / 1000)}k €` : "0"}
+                    {montantAxe(v, maxCA)}
                   </text>
                 </g>
               ))}
@@ -177,11 +208,11 @@ export function SeriesChart(props: {
 
               {/* --- panneau volume : barres --- */}
               {showBand && bandX !== null && <rect x={bandX} y={vy0} width={bandW} height={VOL} fill="var(--muted)" />}
-              {[0, maxV / 2, maxV].map((v) => (
+              {echV.ticks.map((v) => (
                 <g key={v}>
                   <line x1={L} x2={W - R} y1={yV(v)} y2={yV(v)} stroke="var(--border)" strokeWidth={1} />
                   <text x={L - 8} y={yV(v) + 3.5} textAnchor="end" fontSize={10.5} fill="var(--muted-foreground)">
-                    {Math.round(v)}
+                    {v.toLocaleString("fr-FR")}
                   </text>
                 </g>
               ))}
