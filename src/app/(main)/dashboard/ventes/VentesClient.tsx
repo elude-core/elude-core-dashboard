@@ -9,8 +9,7 @@ import { IndexChart } from "@/components/elude/ventes/IndexChart";
 import { SeriesChart } from "@/components/elude/ventes/SeriesChart";
 import { StoreFilter } from "@/components/elude/ventes/StoreFilter";
 import { Button } from "@/components/ui/button";
-import { useVentes } from "@/hooks/useVentes";
-import { aggregate } from "@/lib/ventes";
+import { aggregate, type VentesSnapshot } from "@/lib/ventes";
 
 type Mode = "web" | "hors" | "tout";
 
@@ -44,20 +43,28 @@ function fmtEffet(v: number): string {
   return `×${v.toFixed(2).replace(".", ",")}`;
 }
 
-export default function VentesClient() {
-  const { data, error, isLoading } = useVentes();
+export default function VentesClient({
+  snapshot,
+  ageHours,
+}: {
+  snapshot: VentesSnapshot | null;
+  ageHours: number | null;
+}) {
+  // Données déjà en mémoire (lues côté serveur dans page.tsx, un instantané nocturne ne
+  // change qu'une fois par nuit — pas de fetch client, pas de flash "Chargement…" à chaque
+  // ouverture). `VentesClient` ne porte plus que l'état des filtres, du calcul pur.
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>("web");
 
-  const stores = useMemo(() => (data ? Object.keys(data.stores).sort() : []), [data]);
-  const rows = useMemo(() => (data ? aggregate(data, selected) : []), [data, selected]);
+  const stores = useMemo(() => (snapshot ? Object.keys(snapshot.stores).sort() : []), [snapshot]);
+  const rows = useMemo(() => (snapshot ? aggregate(snapshot, selected) : []), [snapshot, selected]);
   // Repères de bascule filtrés sur la sélection : le go-live d'une boutique qu'on
   // n'affiche pas n'a rien à faire sur le graphique (ex. filtrer sur pro-agrafeuses,
   // jamais migré, ne doit garder aucun repère ni la bande "période storefront").
   const golives = useMemo(() => {
-    if (!data) return [];
-    return selected.length > 0 ? data.golives.filter((g) => selected.includes(g.store)) : data.golives;
-  }, [data, selected]);
+    if (!snapshot) return [];
+    return selected.length > 0 ? snapshot.golives.filter((g) => selected.includes(g.store)) : snapshot.golives;
+  }, [snapshot, selected]);
 
   const n = rows.length;
   // Le dernier mois de la série est le mois en cours, partiel par construction de
@@ -77,18 +84,9 @@ export default function VentesClient() {
       ? ((moisPlein[1] - moisPleinAnPasse[1]) / moisPleinAnPasse[1]) * 100
       : null;
 
-  const hintMoisEnCours = dernier ? `${libelleMois(data?.months[n - 1] ?? "")}, à date — mois partiel` : undefined;
+  const hintMoisEnCours = dernier ? `${libelleMois(snapshot?.months[n - 1] ?? "")}, à date — mois partiel` : undefined;
 
-  if (isLoading && !data) {
-    return (
-      <div className="space-y-6">
-        <h1 className="font-bold text-2xl text-gray-900 dark:text-gray-100">Ventes</h1>
-        <p className="text-gray-500 text-sm">Chargement…</p>
-      </div>
-    );
-  }
-
-  if (error && !data) {
+  if (!snapshot) {
     return (
       <div className="space-y-6">
         <h1 className="font-bold text-2xl text-gray-900 dark:text-gray-100">Ventes</h1>
@@ -102,17 +100,15 @@ export default function VentesClient() {
     );
   }
 
-  if (!data) return null; // ni loading ni error ni data : état transitoire SWR, ne devrait pas durer
-
   return (
     <div className="space-y-6">
       <h1 className="font-bold text-2xl text-gray-900 dark:text-gray-100">Ventes</h1>
 
-      {data.age_hours > SEUIL_STALE_HEURES && (
+      {ageHours !== null && ageHours > SEUIL_STALE_HEURES && (
         <DegradedBanner
           state="stale"
-          title={`Instantané du ${dateHeure.format(new Date(data.generated_at))} — le calcul nocturne n'a pas tourné`}
-          detail={`Âge : ${data.age_hours.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h (seuil ${SEUIL_STALE_HEURES} h). Vérifier le cron de push_snapshot.py.`}
+          title={`Instantané du ${dateHeure.format(new Date(snapshot.generated_at))} — le calcul nocturne n'a pas tourné`}
+          detail={`Âge : ${ageHours.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} h (seuil ${SEUIL_STALE_HEURES} h). Vérifier le cron de push_snapshot.py.`}
         />
       )}
 
@@ -125,7 +121,7 @@ export default function VentesClient() {
           format="percent"
           hint={
             moisPlein && moisPleinAnPasse
-              ? `${libelleMois(data.months[n - 2])} vs ${libelleMois(data.months[n - 14])} — mois pleins, jamais le mois en cours`
+              ? `${libelleMois(snapshot.months[n - 2])} vs ${libelleMois(snapshot.months[n - 14])} — mois pleins, jamais le mois en cours`
               : "historique insuffisant"
           }
         />
@@ -137,35 +133,41 @@ export default function VentesClient() {
         />
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <StoreFilter stores={stores} selected={selected} onChange={setSelected} />
-        <fieldset className="flex gap-2" aria-label="Flux">
-          {FLUX.map((f) => (
-            <Button
-              key={f.mode}
-              type="button"
-              variant={mode === f.mode ? "secondary" : "outline"}
-              aria-pressed={mode === f.mode}
-              onClick={() => setMode(f.mode)}
-            >
-              {f.label}
-            </Button>
-          ))}
-        </fieldset>
+      <StoreFilter stores={stores} selected={selected} onChange={setSelected} />
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-semibold text-base text-gray-900 dark:text-gray-100">Indice base 100</h2>
+          {/* Ne pilote que ce graphique — SeriesChart affiche toujours ses deux canaux,
+              quel que soit le flux choisi (signature figée depuis la tâche 4). Placé ici,
+              dans l'en-tête du graphique qu'il gouverne, pas au-dessus des deux : au-dessus
+              des deux il mentirait sur sa portée (motif repris de la note de référence, qui
+              place ces pastilles dans le fig-head du graphique indexé). */}
+          <fieldset className="flex gap-2" aria-label="Flux">
+            {FLUX.map((f) => (
+              <Button
+                key={f.mode}
+                type="button"
+                variant={mode === f.mode ? "secondary" : "outline"}
+                aria-pressed={mode === f.mode}
+                onClick={() => setMode(f.mode)}
+              >
+                {f.label}
+              </Button>
+            ))}
+          </fieldset>
+        </div>
+        <IndexChart months={snapshot.months} rows={rows} mode={mode} />
       </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-        <IndexChart months={data.months} rows={rows} mode={mode} />
-      </div>
-
-      <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-        <SeriesChart months={data.months} rows={rows} golives={golives} showBand={true} />
+        <SeriesChart months={snapshot.months} rows={rows} golives={golives} showBand={true} />
       </div>
 
       <p className="text-gray-400 text-xs">
-        Non rattaché à aucune boutique : {data.unmapped.count} commande{data.unmapped.count > 1 ? "s" : ""} ·{" "}
-        {eur(data.unmapped.amount)} — contrôle de complétude (séries + non rattaché + Amazon = export Odoo brut).
-        {data.unmapped.count === 0 && " Zéro : tout est rattaché."}
+        Non rattaché à aucune boutique : {snapshot.unmapped.count} commande{snapshot.unmapped.count > 1 ? "s" : ""} ·{" "}
+        {eur(snapshot.unmapped.amount)} — contrôle de complétude (séries + non rattaché + Amazon = export Odoo brut).
+        {snapshot.unmapped.count === 0 && " Zéro : tout est rattaché."}
       </p>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
@@ -176,25 +178,26 @@ export default function VentesClient() {
           <div>
             <p className="text-gray-500 text-sm dark:text-gray-400">Chiffre d'affaires</p>
             <p className="font-bold text-2xl text-gray-900 dark:text-gray-100">
-              {fmtEffet(data.frozen.effect_ca.value)}
+              {fmtEffet(snapshot.frozen.effect_ca.value)}
             </p>
             <p className="text-gray-400 text-xs">
-              IC 95 % : {fmtEffet(data.frozen.effect_ca.ci[0])} – {fmtEffet(data.frozen.effect_ca.ci[1])}
+              IC 95 % : {fmtEffet(snapshot.frozen.effect_ca.ci[0])} – {fmtEffet(snapshot.frozen.effect_ca.ci[1])}
             </p>
           </div>
           <div>
             <p className="text-gray-500 text-sm dark:text-gray-400">Marge</p>
             <p className="font-bold text-2xl text-gray-900 dark:text-gray-100">
-              {fmtEffet(data.frozen.effect_margin.value)}
+              {fmtEffet(snapshot.frozen.effect_margin.value)}
             </p>
             <p className="text-gray-400 text-xs">
-              IC 95 % : {fmtEffet(data.frozen.effect_margin.ci[0])} – {fmtEffet(data.frozen.effect_margin.ci[1])}
+              IC 95 % : {fmtEffet(snapshot.frozen.effect_margin.ci[0])} –{" "}
+              {fmtEffet(snapshot.frozen.effect_margin.ci[1])}
             </p>
           </div>
         </div>
         <p className="mt-3 text-gray-400 text-xs">
-          mesuré le {dateCourte.format(new Date(data.frozen.measured_at))} contre {data.frozen.control_store}, seul site
-          non migré — non recalculable une fois qu'il aura basculé.
+          mesuré le {dateCourte.format(new Date(snapshot.frozen.measured_at))} contre {snapshot.frozen.control_store},
+          seul site non migré — non recalculable une fois qu'il aura basculé.
         </p>
       </div>
     </div>
