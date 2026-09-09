@@ -91,6 +91,13 @@ These serve as the fallback; there is no separate default.css file. */
   --font-mono: var(--font-geist-mono);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
+
+  /* Palette des graphiques de ventes (SeriesChart, IndexChart) — validée en
+     contraste et en daltonisme, ne pas modifier sans revalidation. */
+  --web: #2a78d6;
+  --hors: #eb6834;
+  --mes-ca: var(--web);
+  --mes-nb: #e87ba4;
 }
 
 .dark {
@@ -125,6 +132,12 @@ These serve as the fallback; there is no separate default.css file. */
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /* Palette des graphiques de ventes — variante sombre de la même échelle. */
+  --web: #3987e5;
+  --hors: #d95926;
+  --mes-ca: var(--web);
+  --mes-nb: #d55181;
 }
 
 @layer base {
