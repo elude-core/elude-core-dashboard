@@ -135,6 +135,26 @@ export function isSnapshot(x: unknown): x is VentesSnapshot {
   }
 }
 
+/**
+ * Somme terme à terme les boutiques choisies ; liste vide = toutes (celles connues
+ * de l'instantané, pas une liste figée ailleurs — une boutique renommée ou
+ * nouvellement migrée apparaît automatiquement). Une boutique demandée mais absente
+ * de `snap.stores` (nom invalide) est silencieusement ignorée plutôt que de lever :
+ * la page reste utilisable même sur une sélection périmée après un renommage.
+ */
+export function aggregate(snap: VentesSnapshot, stores: string[]): MonthRow[] {
+  const noms = stores.length > 0 ? stores : Object.keys(snap.stores);
+  return snap.months.map((_mois, i) => {
+    const somme: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+    for (const nom of noms) {
+      const ligne = snap.stores[nom]?.[i];
+      if (!ligne) continue;
+      for (let k = 0; k < 8; k++) somme[k] += ligne[k];
+    }
+    return somme as MonthRow;
+  });
+}
+
 export async function readSnapshot(): Promise<VentesSnapshot | null> {
   const raw = await redis.get(VENTES_KEY);
   if (!raw) return null;

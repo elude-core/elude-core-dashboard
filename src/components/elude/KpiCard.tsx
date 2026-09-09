@@ -2,7 +2,7 @@ export interface KpiCardProps {
   label: string;
   value: number | null;
   unit?: string;
-  format?: "percent" | "rate" | "gigabytes" | "plain";
+  format?: "percent" | "rate" | "gigabytes" | "plain" | "eur";
   total?: number; // pour les barres (RAM)
   hint?: string;
 }
@@ -16,6 +16,10 @@ function formatValue(value: number, format: KpiCardProps["format"]): string {
       return value.toFixed(0);
     case "gigabytes":
       return value.toFixed(1);
+    case "eur":
+      // Même convention que `eur()` dans components/elude/ventes/format.ts — dupliquée
+      // plutôt qu'importée : un composant générique ne doit pas dépendre d'un module feature.
+      return `${value.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
     default:
       return value.toFixed(0);
   }
