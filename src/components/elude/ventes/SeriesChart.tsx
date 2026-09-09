@@ -1,5 +1,7 @@
 import type { MonthRow } from "@/lib/ventes";
 
+import { eur, libelleMois } from "./format";
+
 /**
  * Chiffre d'affaires (aire + ligne) et nombre de commandes (barres), par
  * mois, pour les canaux web et hors web. Transposition directe de
@@ -9,9 +11,13 @@ import type { MonthRow } from "@/lib/ventes";
  * nb_hors, ca_hors, ...] (mois en position 0). Ici `MonthRow` n'a pas le
  * mois — tout est décalé de un : nb_web = row[0], ca_web = row[1],
  * nb_hors = row[2], ca_hors = row[3].
+ *
+ * Le dernier mois de `months` est toujours partiel par construction de
+ * l'instantané (arrêté au jour de la génération) — jamais déterminé par une
+ * date en dur. Signalé par un dernier segment en pointillé sur chaque ligne
+ * de CA, une barre atténuée sur chaque panneau de volume, et une mention
+ * textuelle : un pointillé seul ne se décode pas assez vite.
  */
-
-const eur = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
 
 /** Graduation "ronde" juste au-dessus de v (1×, 1,25×, 1,5×, 2×, 2,5×... × 10^k). */
 function niceMax(v: number): number {
@@ -88,6 +94,11 @@ export function SeriesChart(props: {
       role="img"
       aria-label="Chiffre d'affaires et nombre de commandes par mois, web et hors web"
     >
+      {n > 0 && (
+        <text x={W - R} y={T - 4} textAnchor="end" fontSize={10.5} fill="var(--muted-foreground)">
+          {`${libelleMois(months[n - 1])} : mois partiel — dernier segment en pointillé`}
+        </text>
+      )}
       {BLOCS.map((bloc, bi) => {
         const y0 = T + bi * (BH + BLOC);
         const maxCA = niceMax(Math.max(...rows.map(bloc.ca)));
@@ -99,7 +110,12 @@ export function SeriesChart(props: {
 
         const moy = histoIdx.length ? histoIdx.reduce((s, i) => s + bloc.vol(rows[i]), 0) / histoIdx.length : 0;
 
-        const dCA = rows.map((r, i) => `${i ? "L" : "M"} ${x(i)} ${yCA(bloc.ca(r))}`).join(" ");
+        // Dernier mois partiel : segment final à part, tracé en pointillé.
+        const dCAplein = rows
+          .slice(0, n - 1)
+          .map((r, i) => `${i ? "L" : "M"} ${x(i)} ${yCA(bloc.ca(r))}`)
+          .join(" ");
+        const dCAdernier = `M ${x(n - 2)} ${yCA(bloc.ca(rows[n - 2]))} L ${x(n - 1)} ${yCA(bloc.ca(rows[n - 1]))}`;
         const aireCA = `M ${x(0)} ${y0 + CA} ${rows
           .map((r, i) => `L ${x(i)} ${yCA(bloc.ca(r))}`)
           .join(" ")} L ${x(n - 1)} ${y0 + CA} Z`;
@@ -118,13 +134,23 @@ export function SeriesChart(props: {
             ))}
             <path d={aireCA} fill={bloc.couleur} fillOpacity={0.1} stroke="none" />
             <path
-              d={dCA}
+              d={dCAplein}
               fill="none"
               stroke={bloc.couleur}
               strokeWidth={2}
               strokeLinejoin="round"
               strokeLinecap="round"
             />
+            {n >= 2 && (
+              <path
+                d={dCAdernier}
+                fill="none"
+                stroke={bloc.couleur}
+                strokeWidth={2}
+                strokeDasharray="3 3"
+                strokeLinecap="round"
+              />
+            )}
             <circle
               cx={x(n - 1)}
               cy={yCA(bloc.ca(rows[n - 1]))}
@@ -150,6 +176,7 @@ export function SeriesChart(props: {
             {rows.map((r, i) => {
               const h = vy0 + VOL - yV(bloc.vol(r));
               if (h <= 0) return null;
+              const dernier = i === n - 1;
               return (
                 <rect
                   key={months[i]}
@@ -158,7 +185,7 @@ export function SeriesChart(props: {
                   width={bw}
                   height={h}
                   fill={bloc.couleur}
-                  fillOpacity={0.72}
+                  fillOpacity={dernier ? 0.32 : 0.72}
                   rx={1.5}
                 />
               );
@@ -221,7 +248,7 @@ export function SeriesChart(props: {
       {rows.map((r, i) => (
         <rect key={months[i]} x={x(i) - step / 2} y={T} width={step} height={BH + BLOC + BH} fill="transparent">
           <title>
-            {`${months[i]}\nWeb — ${r[0]} commandes · ${eur(r[1])}\nHors web — ${r[2]} commandes · ${eur(r[3])}`}
+            {`${libelleMois(months[i])}${i === n - 1 ? " (mois partiel)" : ""}\nWeb — ${r[0]} commandes · ${eur(r[1])}\nHors web — ${r[2]} commandes · ${eur(r[3])}`}
           </title>
         </rect>
       ))}

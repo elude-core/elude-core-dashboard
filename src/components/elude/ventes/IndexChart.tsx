@@ -1,5 +1,7 @@
 import type { MonthRow } from "@/lib/ventes";
 
+import { eur, libelleMois } from "./format";
+
 /**
  * Multiples du mois moyen de 2025, pour une mesure (nb de commandes, CA)
  * choisie par `mode`. Transposition directe de `drawIdx` dans la note
@@ -11,17 +13,6 @@ import type { MonthRow } from "@/lib/ventes";
  * mois — tout est décalé de un : nb_web = row[0], ca_web = row[1],
  * nb_hors = row[2], ca_hors = row[3].
  */
-
-const MOIS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
-
-function libelleMois(mois: string): string {
-  const m = Number(mois.slice(5, 7)) - 1;
-  return `${MOIS_FR[m]} ${mois.slice(0, 4)}`;
-}
-
-function eur(n: number): string {
-  return `${n.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
-}
 
 function fmtIndice(v: number): string {
   return `×${(v / 100).toFixed(2).replace(".", ",")}`;
