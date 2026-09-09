@@ -156,7 +156,18 @@ export function aggregate(snap: VentesSnapshot, stores: string[]): MonthRow[] {
 }
 
 export async function readSnapshot(): Promise<VentesSnapshot | null> {
-  const raw = await redis.get(VENTES_KEY);
+  // Panne Redis elle-même (pas juste un contenu corrompu) : cette fonction ne doit JAMAIS
+  // lever. Appelée depuis le rendu du composant serveur de /dashboard/ventes (pas de
+  // error.tsx dans l'appli), une exception ici afficherait la page d'erreur générique de
+  // Next au lieu de la bannière dégradée — régression introduite en repassant `readSnapshot`
+  // du gestionnaire de route (qui, lui, encadre tout dans un try/catch propre) au rendu SSR.
+  let raw: string | null;
+  try {
+    raw = await redis.get(VENTES_KEY);
+  } catch (err) {
+    Sentry.captureException(err, { tags: { upstream: "ventes", cache_state: "unreachable" } });
+    return null;
+  }
   if (!raw) return null;
 
   // Entrée Redis tronquée ou corrompue (disque plein, écriture interrompue...) :
