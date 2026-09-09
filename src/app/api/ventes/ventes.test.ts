@@ -69,8 +69,10 @@ describe("POST /api/ventes/ingest", () => {
     expect(msgForme).not.toBe(msgVersion);
   });
   it("rend 422 (jamais 500) sur un corps dont un champ est du mauvais type — repro revue", async () => {
-    // stores.wynstor: null ferait planter un `.length` non gardé — cf. finding IMPORTANT 2.
-    const res = await post({ stores: { wynstor: null } }, "s3cret");
+    // months présent + stores.wynstor: null faisait planter `rows.length` non gardé sur l'ancien
+    // code (IMPORTANT 2) : {stores:{wynstor:null}} SEUL ne reproduisait pas le crash, le premier
+    // garde-fou (Array.isArray(s.months)) court-circuitait avant d'atteindre stores.
+    const res = await post({ months: ["2026-08"], stores: { wynstor: null } }, "s3cret");
     expect(res.status).toBe(422);
   });
   it("accepte et stocke", async () => {
@@ -85,6 +87,21 @@ describe("POST /api/ventes/ingest", () => {
     });
     it("refuse une ligne mensuelle avec une valeur non numérique", async () => {
       const res = await post({ ...snapshot, stores: { wynstor: [[1, 100, 2, 200, 1, 0, "25", 40]] } }, "s3cret");
+      expect(res.status).toBe(422);
+    });
+    it("refuse un store avec moins de lignes que de mois (ex. un script tiers qui n'enverrait qu'une partie de l'historique)", async () => {
+      const res = await post(
+        {
+          ...snapshot,
+          months: ["2026-07", "2026-08"],
+          stores: { wynstor: [[1, 100, 2, 200, 1, 0, 25, 40]] },
+        },
+        "s3cret",
+      );
+      expect(res.status).toBe(422);
+    });
+    it("refuse une valeur non numérique dans seasonality", async () => {
+      const res = await post({ ...snapshot, seasonality: { web: { "1": "1.27" }, spread: { "1": 0.28 } } }, "s3cret");
       expect(res.status).toBe(422);
     });
     it("refuse des golives mal formés", async () => {
