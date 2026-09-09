@@ -2,26 +2,38 @@ export interface KpiCardProps {
   label: string;
   value: number | null;
   unit?: string;
-  format?: "percent" | "rate" | "gigabytes" | "plain";
+  format?: "percent" | "rate" | "gigabytes" | "plain" | "eur";
   total?: number; // pour les barres (RAM)
   hint?: string;
+  /**
+   * Préfixe les valeurs positives d'un "+". Réservé aux écarts/variations (ex. CA web
+   * vs l'an dernier) — un ratio absolu comme un uptime ou un % de CPU n'est pas une
+   * variation, "+99,50%" n'y aurait pas de sens. `false` par défaut : à activer
+   * explicitement tuile par tuile, jamais globalement pour ce format.
+   */
+  signed?: boolean;
 }
 
-function formatValue(value: number, format: KpiCardProps["format"]): string {
+function formatValue(value: number, format: KpiCardProps["format"], signed: boolean): string {
+  const signe = signed && value > 0 ? "+" : "";
   switch (format) {
     case "percent":
-      return `${value.toFixed(2)}%`;
+      return `${signe}${value.toFixed(2)}%`;
     case "rate":
-      if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
-      return value.toFixed(0);
+      if (value >= 1000) return `${signe}${(value / 1000).toFixed(1)}k`;
+      return `${signe}${value.toFixed(0)}`;
     case "gigabytes":
-      return value.toFixed(1);
+      return `${signe}${value.toFixed(1)}`;
+    case "eur":
+      // Même convention que `eur()` dans components/elude/ventes/format.ts — dupliquée
+      // plutôt qu'importée : un composant générique ne doit pas dépendre d'un module feature.
+      return `${signe}${value.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
     default:
-      return value.toFixed(0);
+      return `${signe}${value.toFixed(0)}`;
   }
 }
 
-export function KpiCard({ label, value, unit, format = "plain", total, hint }: KpiCardProps) {
+export function KpiCard({ label, value, unit, format = "plain", total, hint, signed = false }: KpiCardProps) {
   if (value === null) {
     return (
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
@@ -32,7 +44,7 @@ export function KpiCard({ label, value, unit, format = "plain", total, hint }: K
     );
   }
 
-  const formatted = formatValue(value, format);
+  const formatted = formatValue(value, format, signed);
   const pctOfTotal = total ? (value / total) * 100 : null;
 
   return (
