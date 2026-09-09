@@ -91,8 +91,8 @@ export default function VentesClient({
   // dernier. Sans ça, un +92 % perd le fait qu'il repose sur un creux (août 2025).
   const labelEcart =
     moisPlein && moisPleinAnPasse
-      ? `CA web · ${libelleMois(snapshot?.months[n - 2] ?? "")} vs ${libelleMois(snapshot?.months[n - 14] ?? "")}`
-      : "CA web · écart à 12 mois";
+      ? `Écart CA web · ${libelleMois(snapshot?.months[n - 2] ?? "")} vs ${libelleMois(snapshot?.months[n - 14] ?? "")}`
+      : "Écart CA web · 12 mois";
 
   if (!snapshot) {
     return (
@@ -127,6 +127,7 @@ export default function VentesClient({
           label={labelEcart}
           value={ecartCaWeb12Mois}
           format="percent"
+          signed
           hint={moisPlein && moisPleinAnPasse ? "mois pleins — jamais le mois en cours" : "historique insuffisant"}
         />
         <KpiCard

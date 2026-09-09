@@ -126,12 +126,17 @@ export function IndexChart(props: { months: string[]; rows: MonthRow[]; mode: "w
         × le mois moyen de 2025 · ligne pointillée = 1× = {eur(Math.round(baseCA))} / {Math.round(baseNB)} cdes
       </text>
 
-      {/* écart entre les deux courbes */}
+      {/* Écart entre les deux courbes — c'est le propos du graphique (l'écart entre
+          montant et volume), pas un simple fond : `--mes-ecart` est un token dédié et
+          opaque dans les deux thèmes (déclaré à côté de `--mes-ca`/`--mes-nb` dans
+          globals.css). `--border` ne convient pas ici : en thème sombre il porte déjà
+          10 % d'alpha, et une aire censée porter le propos du graphique disparaissait
+          (10 % × 0,5 = 5 % de blanc sur fond sombre, invisible). */}
       <path
         d={`${idxCA.map((v, i) => `${i ? "L" : "M"} ${x(i)} ${y(v)}`).join(" ")} ${idxNB
           .map((_v, i) => `L ${x(n - 1 - i)} ${y(idxNB[n - 1 - i])}`)
           .join(" ")} Z`}
-        fill="var(--border)"
+        fill="var(--mes-ecart)"
         fillOpacity={0.5}
         stroke="none"
       />

@@ -98,6 +98,11 @@ These serve as the fallback; there is no separate default.css file. */
   --hors: #eb6834;
   --mes-ca: var(--web);
   --mes-nb: #e87ba4;
+  /* Aire d'écart entre les courbes CA/commandes d'IndexChart — token dédié et OPAQUE
+     (jamais `--border`, qui porte déjà de l'alpha en thème sombre : demi-opacité d'une
+     couleur déjà semi-transparente ne laisse presque rien à l'écran). L'opacité réelle se
+     règle côté SVG (`fillOpacity`), pas ici. */
+  --mes-ecart: #d4d4d8;
 }
 
 .dark {
@@ -138,6 +143,7 @@ These serve as the fallback; there is no separate default.css file. */
   --hors: #d95926;
   --mes-ca: var(--web);
   --mes-nb: #d55181;
+  --mes-ecart: #52525b;
 }
 
 @layer base {
