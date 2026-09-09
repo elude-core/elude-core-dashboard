@@ -85,6 +85,14 @@ export default function VentesClient({
       : null;
 
   const hintMoisEnCours = dernier ? `${libelleMois(snapshot?.months[n - 1] ?? "")}, à date — mois partiel` : undefined;
+  // Le libellé nomme les deux mois comparés (jamais en dur, dérivés de `snapshot.months`) :
+  // "écart sur douze mois" sans préciser quoi/contre quoi laisse croire à un cumul glissant
+  // des 12 derniers mois, alors qu'il s'agit du dernier mois PLEIN contre le même mois l'an
+  // dernier. Sans ça, un +92 % perd le fait qu'il repose sur un creux (août 2025).
+  const labelEcart =
+    moisPlein && moisPleinAnPasse
+      ? `CA web · ${libelleMois(snapshot?.months[n - 2] ?? "")} vs ${libelleMois(snapshot?.months[n - 14] ?? "")}`
+      : "CA web · écart à 12 mois";
 
   if (!snapshot) {
     return (
@@ -116,14 +124,10 @@ export default function VentesClient({
         <KpiCard label="Commandes web" value={commandesWeb} hint={hintMoisEnCours} />
         <KpiCard label="CA web HT" value={caWeb} format="eur" hint={hintMoisEnCours} />
         <KpiCard
-          label="Écart CA web / N-12"
+          label={labelEcart}
           value={ecartCaWeb12Mois}
           format="percent"
-          hint={
-            moisPlein && moisPleinAnPasse
-              ? `${libelleMois(snapshot.months[n - 2])} vs ${libelleMois(snapshot.months[n - 14])} — mois pleins, jamais le mois en cours`
-              : "historique insuffisant"
-          }
+          hint={moisPlein && moisPleinAnPasse ? "mois pleins — jamais le mois en cours" : "historique insuffisant"}
         />
         <KpiCard
           label="Marge web"
