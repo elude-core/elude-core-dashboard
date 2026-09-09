@@ -1,3 +1,5 @@
+import * as Sentry from "@sentry/nextjs";
+
 import { redis } from "./redis";
 
 export const VENTES_KEY = "ventes:snapshot";
@@ -41,6 +43,10 @@ export interface VentesSnapshot {
   };
 }
 
+function isMonthRow(x: unknown): x is MonthRow {
+  return Array.isArray(x) && x.length === 8 && x.every((v) => typeof v === "number" && Number.isFinite(v));
+}
+
 function isUnmappedTeam(x: unknown): x is UnmappedTeam {
   const t = x as UnmappedTeam;
   return !!t && typeof t === "object" && typeof t.count === "number" && typeof t.amount === "number";
@@ -59,22 +65,96 @@ function isUnmapped(x: unknown): x is Unmapped {
   );
 }
 
-export function isSnapshot(x: unknown): x is VentesSnapshot {
-  const s = x as VentesSnapshot;
+function isGolive(x: unknown): x is { store: string; date: string } {
+  const g = x as { store: string; date: string };
+  return !!g && typeof g === "object" && typeof g.store === "string" && typeof g.date === "string";
+}
+
+function isNumberRecord(x: unknown): x is Record<string, number> {
   return (
-    !!s &&
-    typeof s === "object" &&
-    Array.isArray(s.months) &&
-    s.months.length > 0 &&
-    !!s.stores &&
-    Object.keys(s.stores).length > 0 &&
-    Object.values(s.stores).every((rows) => rows.length === s.months.length) &&
-    typeof s.generated_at === "string" &&
-    isUnmapped(s.unmapped)
+    !!x &&
+    typeof x === "object" &&
+    !Array.isArray(x) &&
+    Object.values(x as Record<string, unknown>).every((v) => typeof v === "number")
   );
+}
+
+function isEffect(x: unknown): x is { value: number; ci: [number, number] } {
+  const e = x as { value: number; ci: [number, number] };
+  return (
+    !!e &&
+    typeof e === "object" &&
+    typeof e.value === "number" &&
+    Array.isArray(e.ci) &&
+    e.ci.length === 2 &&
+    typeof e.ci[0] === "number" &&
+    typeof e.ci[1] === "number"
+  );
+}
+
+function isFrozen(x: unknown): x is VentesSnapshot["frozen"] {
+  const f = x as VentesSnapshot["frozen"];
+  return (
+    !!f &&
+    typeof f === "object" &&
+    typeof f.measured_at === "string" &&
+    typeof f.control_store === "string" &&
+    isEffect(f.effect_ca) &&
+    isEffect(f.effect_margin)
+  );
+}
+
+// Frontière entre un JSON arrivé de l'extérieur (ingestion) ou relu depuis Redis
+// (potentiellement corrompu) et le reste du dashboard : ne doit JAMAIS lever, quelle
+// que soit la forme du corps reçu — d'où le filet try/catch en plus des gardes explicites.
+export function isSnapshot(x: unknown): x is VentesSnapshot {
+  try {
+    const s = x as VentesSnapshot;
+    if (!s || typeof s !== "object") return false;
+    if (!Array.isArray(s.months) || s.months.length === 0) return false;
+    if (!s.stores || typeof s.stores !== "object") return false;
+
+    const rangees = Object.values(s.stores);
+    if (rangees.length === 0) return false;
+    if (!rangees.every((rows) => Array.isArray(rows) && rows.length === s.months.length && rows.every(isMonthRow))) {
+      return false;
+    }
+
+    if (typeof s.generated_at !== "string" || Number.isNaN(Date.parse(s.generated_at))) return false;
+    if (!isUnmapped(s.unmapped)) return false;
+    if (!Array.isArray(s.golives) || !s.golives.every(isGolive)) return false;
+
+    if (!s.seasonality || typeof s.seasonality !== "object") return false;
+    if (!isNumberRecord(s.seasonality.web) || !isNumberRecord(s.seasonality.spread)) return false;
+
+    if (!isFrozen(s.frozen)) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function readSnapshot(): Promise<VentesSnapshot | null> {
   const raw = await redis.get(VENTES_KEY);
-  return raw ? (JSON.parse(raw) as VentesSnapshot) : null;
+  if (!raw) return null;
+
+  // Entrée Redis tronquée ou corrompue (disque plein, écriture interrompue...) :
+  // ne jamais laisser planter la route, retomber comme si rien n'avait encore été ingéré.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    Sentry.captureException(err, { tags: { upstream: "ventes", cache_state: "corrupt" } });
+    return null;
+  }
+
+  if (!isSnapshot(parsed)) {
+    Sentry.captureException(new Error("ventes:snapshot en cache ne respecte plus le contrat"), {
+      tags: { upstream: "ventes", cache_state: "invalid" },
+    });
+    return null;
+  }
+
+  return parsed;
 }

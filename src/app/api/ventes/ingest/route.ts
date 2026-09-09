@@ -20,9 +20,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "JSON invalide" }, { status: 422 });
   }
 
-  if (!isSnapshot(corps) || corps.version !== VENTES_VERSION) {
+  if (!isSnapshot(corps)) {
     return NextResponse.json(
-      { error: `instantané non conforme — version ${VENTES_VERSION} attendue` },
+      { error: "instantané non conforme au contrat (forme ou champs manquants)" },
+      { status: 422 },
+    );
+  }
+  if (corps.version !== VENTES_VERSION) {
+    return NextResponse.json(
+      { error: `version ${corps.version} non gérée — version ${VENTES_VERSION} attendue` },
       { status: 422 },
     );
   }
