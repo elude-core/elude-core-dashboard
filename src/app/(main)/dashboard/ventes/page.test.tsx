@@ -1,9 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { VENTES_REDIS_TIMEOUT_MS } from "@/lib/ventes";
+import { VENTES_REDIS_TIMEOUT_MS } from "@/lib/ventes.server";
 
-// `readSnapshot` (src/lib/ventes.ts) n'encadrait pas l'appel à `redis.get` lui-même —
+// `readSnapshot` (src/lib/ventes.server.ts) n'encadrait pas l'appel à `redis.get` lui-même —
 // seulement le JSON.parse et la validation de schéma. Tant qu'elle vivait dans le
 // gestionnaire de route, une panne Redis donnait un 500 propre. Rendue directement par
 // ce composant serveur (pas de error.tsx dans l'appli), l'exception y remontait telle
