@@ -1,6 +1,9 @@
+"use client";
+
 import type { MonthRow } from "@/lib/ventes";
 
 import { eur, libelleMois } from "./format";
+import { InfobulleSvg, useMoisPointe } from "./InfobulleSvg";
 
 /**
  * Multiples du mois moyen de 2025, pour une mesure (nb de commandes, CA)
@@ -31,6 +34,7 @@ export function IndexChart(props: { months: string[]; rows: MonthRow[]; mode: "w
   const { months, rows, mode } = props;
   const mesure = MESURES[mode];
   const n = rows.length;
+  const { mois, setMois, auClavier } = useMoisPointe(n);
 
   // Base 100 = moyenne des douze mois de 2025 pour la mesure choisie.
   const idx2025: number[] = [];
@@ -105,11 +109,20 @@ export function IndexChart(props: { months: string[]; rows: MonthRow[]; mode: "w
     // ~330 px utiles le texte à fontSize 10.5 tombe à ~3,5 px, illisible. La largeur
     // minimale reprend W : le SVG rend alors ses unités 1:1, comme sur un desktop actuel.
     <div className="overflow-x-auto">
+      {/* Une seule tabulation pour tout le graphique, puis les flèches déplacent le mois
+          pointé (Origine/Fin aux extrémités, Échap referme) — cf. `useMoisPointe`. */}
       <svg
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`${mesure.label} : CA et nombre de commandes ramenés en base 100 sur le mois moyen de 2025`}
-        className="min-w-[1000px]"
+        aria-label={`${mesure.label} : CA et nombre de commandes ramenés en base 100 sur le mois moyen de 2025. Flèches gauche et droite pour parcourir les mois.`}
+        className="min-w-[1000px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        // Le SVG EST interactif depuis l'infobulle au clavier : la prémisse de la règle
+        // (« un svg n'est pas interactif ») ne tient plus. C'est le seul arrêt de tabulation
+        // du graphique — le poser sur les 45 bandes en ajouterait 45 par graphique.
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: graphique navigable aux flèches
+        tabIndex={0}
+        onKeyDown={auClavier}
+        onBlur={() => setMois(null)}
       >
         {graduations.map((v) => (
           <g key={v}>
@@ -196,12 +209,44 @@ export function IndexChart(props: { months: string[]; rows: MonthRow[]; mode: "w
         ))}
 
         {rows.map((r, i) => (
-          <rect key={months[i]} x={x(i) - step / 2} y={T} width={step} height={H - T - B} fill="transparent">
+          // Bande de survol pure, sans rôle ni contenu propre : son équivalent clavier est
+          // porté par le SVG parent (flèches), pas par elle. Lui donner un rôle interactif
+          // la ferait annoncer 45 fois par un lecteur d'écran.
+          // biome-ignore lint/a11y/noStaticElementInteractions: équivalent clavier sur le parent
+          <rect
+            key={months[i]}
+            x={x(i) - step / 2}
+            y={T}
+            width={step}
+            height={H - T - B}
+            fill="transparent"
+            onMouseEnter={() => setMois(i)}
+            onMouseLeave={() => setMois(null)}
+          >
+            {/* Conservé sous l'infobulle rendue : c'est le seul texte que les
+                outils qui lisent le SVG brut (export, capture, lecteur d'écran
+                sur l'élément) trouvent — il ne coûte rien et ne se voit pas
+                quand l'infobulle rendue prend la main. */}
             <title>
               {`${libelleMois(months[i])} — ${mesure.label.toLowerCase()}\nMontant : ${eur(mesure.ca(r))} (${fmtIndice(idxCA[i])})\nCommandes : ${mesure.nb(r)} (${fmtIndice(idxNB[i])})`}
             </title>
           </rect>
         ))}
+
+        {mois !== null && rows[mois] && (
+          <InfobulleSvg
+            x={x(mois)}
+            y={T + 6}
+            largeurSvg={W}
+            yGuide={T}
+            hauteurGuide={H - T - B}
+            lignes={[
+              `${libelleMois(months[mois])} — ${mesure.label.toLowerCase()}`,
+              `Montant : ${eur(mesure.ca(rows[mois]))} (${fmtIndice(idxCA[mois])})`,
+              `Commandes : ${mesure.nb(rows[mois])} (${fmtIndice(idxNB[mois])})`,
+            ]}
+          />
+        )}
       </svg>
     </div>
   );

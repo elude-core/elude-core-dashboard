@@ -1,6 +1,9 @@
+"use client";
+
 import type { MonthRow } from "@/lib/ventes";
 
 import { eur, libelleMois } from "./format";
+import { InfobulleSvg, useMoisPointe } from "./InfobulleSvg";
 
 /**
  * Chiffre d'affaires (aire + ligne) et nombre de commandes (barres), par
@@ -77,6 +80,10 @@ export function SeriesChart(props: {
 }) {
   const { months, rows, golives, showBand } = props;
   const n = rows.length;
+  // `moisPointe` et non `mois` : une variable locale du même nom existe déjà plus bas
+  // (`const mois = g.date.slice(0, 7)` dans la résolution des go-lives) — la masquer
+  // rendrait les deux illisibles.
+  const { mois: moisPointe, setMois, auClavier } = useMoisPointe(n);
 
   const W = 1000;
   const CA = 118;
@@ -132,8 +139,15 @@ export function SeriesChart(props: {
       <svg
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label="Chiffre d'affaires et nombre de commandes par mois, web et hors web"
-        className="min-w-[1000px]"
+        aria-label="Chiffre d'affaires et nombre de commandes par mois, web et hors web. Flèches gauche et droite pour parcourir les mois."
+        className="min-w-[1000px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+        // Le SVG EST interactif depuis l'infobulle au clavier : la prémisse de la règle
+        // (« un svg n'est pas interactif ») ne tient plus. C'est le seul arrêt de tabulation
+        // du graphique — le poser sur les 45 bandes en ajouterait 45 par graphique.
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: graphique navigable aux flèches
+        tabIndex={0}
+        onKeyDown={auClavier}
+        onBlur={() => setMois(null)}
       >
         {n > 0 && (
           <text x={W - R} y={T - 4} textAnchor="end" fontSize={10.5} fill="var(--muted-foreground)">
@@ -296,12 +310,41 @@ export function SeriesChart(props: {
 
         {/* zones de survol */}
         {rows.map((r, i) => (
-          <rect key={months[i]} x={x(i) - step / 2} y={T} width={step} height={BH + BLOC + BH} fill="transparent">
+          // Bande de survol pure, sans rôle ni contenu propre : son équivalent clavier est
+          // porté par le SVG parent (flèches), pas par elle. Lui donner un rôle interactif
+          // la ferait annoncer 45 fois par un lecteur d'écran.
+          // biome-ignore lint/a11y/noStaticElementInteractions: équivalent clavier sur le parent
+          <rect
+            key={months[i]}
+            x={x(i) - step / 2}
+            y={T}
+            width={step}
+            height={BH + BLOC + BH}
+            fill="transparent"
+            onMouseEnter={() => setMois(i)}
+            onMouseLeave={() => setMois(null)}
+          >
+            {/* Conservé sous l'infobulle rendue — cf. le commentaire jumeau dans IndexChart. */}
             <title>
               {`${libelleMois(months[i])}${i === n - 1 ? " (mois partiel)" : ""}\nWeb — ${r[0]} commandes · ${eur(r[1])}\nHors web — ${r[2]} commandes · ${eur(r[3])}`}
             </title>
           </rect>
         ))}
+
+        {moisPointe !== null && rows[moisPointe] && (
+          <InfobulleSvg
+            x={x(moisPointe)}
+            y={T + 6}
+            largeurSvg={W}
+            yGuide={T}
+            hauteurGuide={BH + BLOC + BH}
+            lignes={[
+              `${libelleMois(months[moisPointe])}${moisPointe === n - 1 ? " (mois partiel)" : ""}`,
+              `Web — ${rows[moisPointe][0]} commandes · ${eur(rows[moisPointe][1])}`,
+              `Hors web — ${rows[moisPointe][2]} commandes · ${eur(rows[moisPointe][3])}`,
+            ]}
+          />
+        )}
       </svg>
     </div>
   );
