@@ -134,3 +134,41 @@ Contributions are welcome. Feel free to open issues, feature requests, or start 
 
 
 **Happy Vibe Coding!**
+
+## Exploitation — page Ventes
+
+`/dashboard/ventes` sert un instantané des ventes calculé depuis Odoo. **Le dashboard ne parle
+jamais à Odoo** : un script pousse, il ne va pas chercher.
+
+| | |
+|---|---|
+| Producteur | `/opt/wynstor/scripts/ventes/push_snapshot.py`, cron quotidien à 3 h 40 |
+| Transport | `POST /api/ventes/ingest`, authentifié par l'en-tête `x-ingest-secret` |
+| Stockage | clé Redis `ventes:snapshot`, sans expiration |
+| Lecture | `readSnapshot()` côté serveur ; `GET /api/ventes` n'est plus consommé par l'application, il ne sert qu'au diagnostic — **ne pas le supprimer**, le runbook ci-dessous s'en sert |
+
+Variable d'environnement requise : **`VENTES_INGEST_SECRET`**, la même valeur des deux côtés
+(dashboard et machine du cron). Sans elle, l'ingestion répond **401 à toute requête** — une
+variable posée dans Coolify n'est prise en compte qu'après un redéploiement.
+
+### La page affiche « instantané indisponible »
+
+```bash
+curl -s https://dashboard.elude.fr/api/ventes | head -c 120
+```
+
+- **503** — aucun instantané en cache. Relancer l'envoi à la main depuis la machine du cron :
+  `python3 /opt/wynstor/scripts/ventes/push_snapshot.py`
+- **401 au renvoi** — `VENTES_INGEST_SECRET` absent côté Coolify, ou posé sans redéploiement.
+- **404 au renvoi** — le code n'est pas déployé sur l'application ciblée.
+- **Bandeau « données périmées »** au-delà de 30 h — le cron n'est pas passé ; voir
+  `/opt/wynstor/data/ventes/cron.log`.
+
+Le domaine est derrière un défi anti-robot Cloudflare qu'un client HTTP ne franchit pas : le
+script vise l'origine directement via `VENTES_INGEST_ORIGIN`. Sans cette variable, l'envoi
+échoue en 403 sans que le message ne mentionne le pare-feu.
+
+### Lancer le dashboard en local
+
+`REDIS_URL` de `.env.example` pointe l'hôte Docker `elude-core-redis`, qui ne résout pas hors
+conteneur — le surcharger (`redis://127.0.0.1:6379/2`) avant de démarrer.
