@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { exclureE2e, exclureInternes, exclureRobots } from "@/lib/exclusions";
 import { medusaDb } from "@/lib/medusa-db";
 
 export const dynamic = "force-dynamic";
@@ -13,9 +14,9 @@ export const dynamic = "force-dynamic";
  * commande > devis (table quote du module custom, jointe sur cart_id) >
  * paiement > livraison > identifié > panier.
  *
- * Exclusions héritées de l'audit du 25/08 (cf. memory purge paniers e2e) :
- *   - metadata.e2e = 'true' (paniers Playwright, tagués par le storefront)
- *   - emails %@elude.fr (paniers de QA authentifiée / internes)
+ * Exclusions : voir `lib/exclusions.ts` — paniers Playwright (`metadata.e2e`),
+ * `@elude.fr`, et les adresses personnelles de l'équipe. Une seule liste pour
+ * tout le dashboard, sinon deux écrans comptent deux populations.
  * Cache serveur 30 s par fenêtre. Montants Medusa en euros HT (pas centimes).
  */
 
@@ -24,6 +25,26 @@ export type CartEtape = "panier" | "identifie" | "livraison" | "paiement" | "dev
 export interface CartRow {
   id: string;
   at: string;
+  /**
+   * Instant où le panier est devenu commande (`cart.completed_at`), `null`
+   * sinon. C'est la date qui sert à filtrer depuis le graphe CA.
+   *
+   * 🪤 NE PAS filtrer sur `at` pour ça : `at` est la date de CRÉATION du panier.
+   * Un panier ouvert le 30/08 et commandé le 02/09 ne sortirait pas sur un clic
+   * du 02. Mesuré le 04/09 : `completed_at` colle à `order.created_at` à
+   * 11 secondes en moyenne (max 5 min sur 92 paniers), donc le jour calendaire
+   * est le même.
+   */
+  commandeAt: string | null;
+  /**
+   * Instant où la demande de devis est partie de ce panier, `null` sinon.
+   *
+   * 🪤 Sans lui, un panier d'étape « Devis » se rangerait à l'heure d'OUVERTURE
+   * du panier dans le damier des créneaux, pas à l'heure où le devis est parti.
+   * Mesuré sur les paniers convertis : 27 sur 99 changent d'heure entre les
+   * deux, et l'écart va jusqu'à 25 jours.
+   */
+  devisAt: string | null;
   /** "ads" si le panier porte une attribution Google Ads (click_type en
    *  metadata, stampée par le storefront), "site" sinon. Couverture : les
    *  commandes depuis le 25/08 ; les paniers en cours après storefront#1174. */
@@ -32,6 +53,16 @@ export interface CartRow {
   /** Code postal saisi pour l'estimation des fdp (metadata, posé par le
    *  storefront à la saisie — couvre les paniers en cours après #1174). */
   cp: string | null;
+  /** Appareil du PREMIER ajout — `mobile`, `tablet`, ou `ordinateur`
+   *  (storefront#1189). ⚠️ `null` sur tout panier antérieur : c'est une
+   *  capture, pas un calcul rétroactif. */
+  device: string | null;
+  /** Système : `iOS`, `Android`, `Windows`, `macOS`… Même couverture. */
+  deviceOs: string | null;
+  /** D'où part le PREMIER ajout : `pdp_barre`, `pdp_variantes`,
+   *  `pdp_buy_with`, `commande_rapide`, `recommande`, `deja_achete`.
+   *  C'est la seule mesure de ce que produit le contenu éditorial. */
+  surface: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -47,7 +78,12 @@ export interface CartsLivePayload {
   generatedAt: string;
 }
 
-const ALLOWED_DAYS = new Set([1, 7, 30]);
+/**
+ * 90 ajouté le 04/09 pour que le clic sur une barre du graphe CA puisse
+ * atteindre n'importe quel jour de l'historique. Volume mesuré : 304 paniers
+ * sur 30 j, 598 sur 90 j — la charge passe.
+ */
+const ALLOWED_DAYS = new Set([1, 7, 30, 90]);
 const CACHE_MS = 30_000;
 const cache = new Map<number, { at: number; data: CartsLivePayload }>();
 
@@ -55,8 +91,13 @@ const SQL = `
 SELECT
   c.id,
   c.created_at AS at,
+  c.completed_at AS commande_at,
+  (SELECT min(q.created_at) FROM quote q WHERE q.cart_id = c.id AND q.deleted_at IS NULL) AS devis_at,
   c.metadata->>'click_type' AS click_type,
   c.metadata->>'shipping_postal_code' AS cp,
+  c.metadata->>'device_type' AS device,
+  c.metadata->>'device_os' AS device_os,
+  c.metadata->>'add_surface' AS surface,
   sc.name AS canal,
   c.email,
   count(li.id)::int AS lignes,
@@ -75,10 +116,12 @@ SELECT
 FROM cart c
 JOIN sales_channel sc ON sc.id = c.sales_channel_id
 JOIN cart_line_item li ON li.cart_id = c.id AND li.deleted_at IS NULL
-WHERE c.created_at >= now() - make_interval(days => $1)
+WHERE (c.created_at >= now() - make_interval(days => $1)
+       OR c.completed_at >= now() - make_interval(days => $1))
   AND c.deleted_at IS NULL
-  AND (c.metadata IS NULL OR c.metadata->>'e2e' IS NULL)
-  AND (c.email IS NULL OR c.email NOT ILIKE '%@elude.fr')
+  AND ${exclureE2e("c")}
+  AND ${exclureRobots("c")}
+  AND ${exclureInternes("c.email")}
 GROUP BY c.id, sc.name
 ORDER BY c.created_at DESC
 `;
@@ -86,8 +129,13 @@ ORDER BY c.created_at DESC
 interface RawRow {
   id: string;
   at: Date;
+  commande_at: Date | null;
+  devis_at: Date | null;
   click_type: string | null;
   cp: string | null;
+  device: string | null;
+  device_os: string | null;
+  surface: string | null;
   canal: string;
   email: string | null;
   lignes: number;
@@ -117,9 +165,14 @@ export async function GET(request: Request) {
       rows: rows.map((r) => ({
         id: r.id,
         at: r.at.toISOString(),
+        commandeAt: r.commande_at ? r.commande_at.toISOString() : null,
+        devisAt: r.devis_at ? r.devis_at.toISOString() : null,
         source: (r.click_type ? "ads" : "site") as CartRow["source"],
         clickType: r.click_type,
         cp: r.cp,
+        device: r.device,
+        deviceOs: r.device_os,
+        surface: r.surface,
         canal: r.canal,
         email: r.email,
         lignes: r.lignes,

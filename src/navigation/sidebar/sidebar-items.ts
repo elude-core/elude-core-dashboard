@@ -9,6 +9,7 @@ import {
   Server,
   ShoppingCart,
   TrendingUp,
+  Truck,
 } from "lucide-react";
 
 export interface NavSubItem {
@@ -43,6 +44,7 @@ export const sidebarItems: NavGroup[] = [
     items: [
       { title: "Vue d'ensemble", url: "/dashboard", icon: LayoutDashboard },
       { title: "Paniers", url: "/dashboard/paniers", icon: ShoppingCart, isNew: true },
+      { title: "Livraison", url: "/dashboard/livraison", icon: Truck, isNew: true },
       { title: "Ventes", url: "/dashboard/ventes", icon: TrendingUp },
       { title: "Stack health", url: "/dashboard/stack-health", icon: Activity },
       { title: "Sync pipeline", url: "/dashboard/sync-pipeline", icon: GitBranch },

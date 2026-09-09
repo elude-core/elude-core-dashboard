@@ -4,9 +4,46 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Loader2, RefreshCw, ShoppingCart } from "lucide-react";
 
-import type { CartEtape, CartsLivePayload } from "@/app/api/carts-live/route";
+import type { CartEtape, CartRow, CartsLivePayload } from "@/app/api/carts-live/route";
+import { AffluenceHeatmap } from "@/components/elude/AffluenceHeatmap";
+import { CommerceStatsPanel } from "@/components/elude/CommerceStatsPanel";
+import { bascule, type Creneau, creneauVide, dansCreneau, libelleCreneau, versMatrice } from "@/lib/affluence";
 
 const REFRESH_INTERVAL_MS = 60_000;
+
+/**
+ * Jour calendaire `YYYY-MM-DD` en heure de Paris.
+ *
+ * 🪤 Doit correspondre EXACTEMENT au découpage de `/api/commerce-stats`, qui
+ * groupe en `AT TIME ZONE 'Europe/Paris'`. Un `toISOString().slice(0,10)`
+ * découperait en UTC : une commande passée à 01 h du matin en été tomberait la
+ * veille et le clic ne la trouverait jamais.
+ */
+function jourParis(iso: string | null): string | null {
+  if (!iso) return null;
+  // `en-CA` rend nativement AAAA-MM-JJ.
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/Paris" });
+}
+
+/**
+ * Instant qui situe une ligne dans le temps : celui de l'ÉTAPE ATTEINTE, pas
+ * celui de l'ouverture du panier.
+ *
+ * 🪤 Prendre `at` pour tout le monde rangerait une commande à l'heure où le
+ * panier a été ouvert. Mesuré le 07/09 : 27 paniers convertis sur 99 changent
+ * d'heure entre les deux, et l'écart va de 7 minutes (médiane) à 25 jours. Le
+ * damier des créneaux se lirait alors comme « quand les gens ouvrent un
+ * panier », en prétendant dire « quand ils commandent ».
+ */
+function instantEtape(r: CartRow): string {
+  return r.commandeAt ?? r.devisAt ?? r.at;
+}
+
+/** Plus petite fenêtre servie par l'API qui couvre un jour donné. */
+function fenetrePour(jour: string): number {
+  const ecart = (Date.now() - new Date(`${jour}T12:00:00`).getTime()) / 86_400_000;
+  return [1, 7, 30, 90].find((d) => d >= ecart + 1) ?? 90;
+}
 
 const ETAPES: CartEtape[] = ["panier", "identifie", "livraison", "paiement", "devis", "commande"];
 
@@ -47,6 +84,7 @@ const WINDOWS: Array<{ days: number; label: string }> = [
   { days: 1, label: "Aujourd'hui" },
   { days: 7, label: "7 jours" },
   { days: 30, label: "30 jours" },
+  { days: 90, label: "90 jours" },
 ];
 
 const eur = (n: number) => `${n.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €`;
@@ -77,6 +115,25 @@ function Chip({ etape }: { etape: CartEtape }) {
   );
 }
 
+/**
+ * `device_type` vient de `userAgent()` de Next, dont le vocabulaire est
+ * anglais et technique. On l'affiche en clair — la colonne est lue par des
+ * humains, pas par un script.
+ *
+ * `ordinateur` est posé explicitement par le storefront : cette bibliothèque
+ * rend une valeur VIDE pour un desktop, et une case vide se lirait comme une
+ * donnée manquante.
+ */
+const LIBELLE_APPAREIL: Record<string, string> = {
+  mobile: "Mobile",
+  tablet: "Tablette",
+  ordinateur: "Ordinateur",
+  console: "Console",
+  smarttv: "TV",
+  wearable: "Montre",
+  embedded: "Embarqué",
+};
+
 export default function PaniersClient() {
   const [days, setDays] = useState(7);
   const [payload, setPayload] = useState<CartsLivePayload | null>(null);
@@ -87,6 +144,10 @@ export default function PaniersClient() {
   const [fEtape, setFEtape] = useState("");
   const [fSource, setFSource] = useState("");
   const [fQ, setFQ] = useState("");
+  /** Jour `YYYY-MM-DD` sélectionné en cliquant une barre du graphe CA. */
+  const [fJour, setFJour] = useState<string | null>(null);
+  /** Case, ligne ou colonne sélectionnée dans le damier des créneaux. */
+  const [fCreneau, setFCreneau] = useState<Creneau | null>(null);
   const [sortKey, setSortKey] = useState<"at" | "totalHt">("at");
   const [sortDir, setSortDir] = useState<-1 | 1>(-1);
 
@@ -128,39 +189,100 @@ export default function PaniersClient() {
     };
   }, [rows]);
 
-  const perEtape = useMemo(
-    () => ETAPES.map((e) => ({ etape: e, count: rows.filter((r) => r.etape === e).length })),
-    [rows],
+  /**
+   * Filtrage en FACETTES : chaque panneau applique tous les filtres actifs SAUF
+   * le sien.
+   *
+   * 🪤 Une facette qui se filtre elle-même s'auto-détruit : sélectionner l'étape
+   * « Devis » mettrait les cinq autres barres à zéro, et on ne pourrait plus
+   * cliquer ailleurs pour changer d'avis. Chaque panneau doit donc voir le monde
+   * tel qu'il serait SANS sa propre sélection — c'est ce que `sauf` exprime.
+   *
+   * ── Le filtre JOUR vaut « ce qui s'est passé ce jour-là » ───────────────────
+   *
+   * Panier ouvert ce jour OU commande passée ce jour. Filtrer sur la seule date
+   * de commande effondrerait l'entonnoir : seule l'étape « Commande » serait non
+   * nulle, les cinq autres à zéro — un entonnoir qui ne montre plus d'entonnoir.
+   *
+   * ⚠️ Conséquence assumée : la liste peut afficher PLUS de lignes que le nombre
+   * de commandes de la barre cliquée, puisqu'elle inclut les paniers ouverts ce
+   * jour-là qui n'ont pas converti. C'est précisément ce qu'on veut voir en
+   * analysant un pic, mais ça interdit de lire « lignes » comme « commandes ».
+   */
+  const passe = useCallback(
+    (r: CartRow, sauf?: "canal" | "etape" | "source" | "creneau") => {
+      const q = fQ.toLowerCase();
+      return (
+        (sauf === "canal" || !fCanal || r.canal === fCanal) &&
+        (sauf === "etape" || !fEtape || r.etape === fEtape) &&
+        (sauf === "source" || !fSource || r.source === fSource) &&
+        (sauf === "creneau" || dansCreneau(instantEtape(r), fCreneau)) &&
+        (!fJour || jourParis(r.commandeAt) === fJour || jourParis(r.at) === fJour) &&
+        (!q || (r.email ?? "").toLowerCase().includes(q) || r.produit.toLowerCase().includes(q))
+      );
+    },
+    [fCanal, fEtape, fSource, fJour, fQ, fCreneau],
   );
+
+  const perEtape = useMemo(() => {
+    const base = rows.filter((r) => passe(r, "etape"));
+    return ETAPES.map((e) => ({ etape: e, count: base.filter((r) => r.etape === e).length }));
+  }, [rows, passe]);
   const maxEtape = Math.max(1, ...perEtape.map((x) => x.count));
 
-  const perCanal = useMemo(
-    () =>
-      canaux
-        .map((c) => {
-          const cRows = rows.filter((r) => r.canal === c);
-          return { canal: c, total: cRows.length, conv: cRows.filter((r) => r.etape === "commande").length };
-        })
-        .sort((a, b) => b.total - a.total),
-    [rows, canaux],
-  );
+  const perCanal = useMemo(() => {
+    const base = rows.filter((r) => passe(r, "canal"));
+    return canaux
+      .map((c) => {
+        const cRows = base.filter((r) => r.canal === c);
+        return { canal: c, total: cRows.length, conv: cRows.filter((r) => r.etape === "commande").length };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [rows, canaux, passe]);
   const maxCanal = Math.max(1, ...perCanal.map((x) => x.total));
 
+  /** Le damier voit le monde SANS sa propre sélection, comme les autres facettes. */
+  const perCreneau = useMemo(
+    () => versMatrice(rows.filter((r) => passe(r, "creneau")).map(instantEtape)),
+    [rows, passe],
+  );
+
+  /**
+   * Ce qu'une case du damier compte. Suit le filtre d'étape : sans lui, ce sont
+   * des paniers — et le dire évite de lire « 27 » comme 27 commandes.
+   */
+  const libelleCreneaux = fEtape
+    ? `${ETAPE_META[fEtape as CartEtape].label.replace(/[→✓]/g, "").trim().toLowerCase()}s`
+    : "paniers";
+
   const filtered = useMemo(() => {
-    const q = fQ.toLowerCase();
-    const out = rows.filter(
-      (r) =>
-        (!fCanal || r.canal === fCanal) &&
-        (!fEtape || r.etape === fEtape) &&
-        (!fSource || r.source === fSource) &&
-        (!q || (r.email ?? "").toLowerCase().includes(q) || r.produit.toLowerCase().includes(q)),
-    );
+    const out = rows.filter((r) => passe(r));
     return [...out].sort((a, b) => {
       const ka = sortKey === "at" ? a.at : a.totalHt;
       const kb = sortKey === "at" ? b.at : b.totalHt;
       return (ka < kb ? -1 : ka > kb ? 1 : 0) * sortDir;
     });
-  }, [rows, fCanal, fEtape, fSource, fQ, sortKey, sortDir]);
+  }, [rows, passe, sortKey, sortDir]);
+
+  /**
+   * Clic sur une barre du graphe CA. Re-cliquer le même jour désélectionne.
+   *
+   * 🪤 Le graphe couvre tout l'historique, la liste seulement `days`. Cliquer le
+   * 20/08 alors que la fenêtre est à 7 jours donnerait une liste VIDE sans rien
+   * expliquer : on élargit donc la fenêtre à la plus petite qui couvre ce jour.
+   */
+  const choisirJour = useCallback(
+    (jour: string) => {
+      if (fJour === jour) {
+        setFJour(null);
+        return;
+      }
+      const besoin = fenetrePour(jour);
+      if (besoin > days) setDays(besoin);
+      setFJour(jour);
+    },
+    [fJour, days],
+  );
 
   const toggleSort = (key: "at" | "totalHt") => {
     setSortDir(sortKey === key ? (d) => (d === -1 ? 1 : -1) : () => -1);
@@ -222,26 +344,59 @@ export default function PaniersClient() {
         <Tile value={String(stats.relance)} label="identifiés à relancer" />
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-lg border bg-card p-4">
-          <h2 className="mb-3 font-semibold text-muted-foreground text-sm uppercase tracking-wide">Étape atteinte</h2>
-          <div className="space-y-2">
-            {perEtape.map(({ etape, count }) => (
-              <div key={etape} className="grid grid-cols-[110px_1fr_44px] items-center gap-2">
-                <span className="flex items-center gap-2 text-muted-foreground text-sm">
-                  <span className={`h-2 w-2 rounded-sm ${ETAPE_META[etape].dot}`} aria-hidden />
-                  {ETAPE_META[etape].label}
-                </span>
-                <div className="relative h-4 rounded bg-muted">
-                  <div
-                    className={`absolute inset-y-0 left-0 min-w-0.5 rounded ${etape === "commande" ? "bg-emerald-500" : "bg-primary/70"}`}
-                    style={{ width: `${(100 * count) / maxEtape}%` }}
-                  />
-                </div>
-                <span className="text-right text-sm tabular-nums">{count}</span>
-              </div>
-            ))}
+      <CommerceStatsPanel onJourClick={choisirJour} jourActif={fJour} />
+
+      {/* Colonne large (2/3) : l'entonnoir, puis le damier des heures — les deux
+          se lisent l'un sous l'autre. Le « par canal » garde sa colonne à droite. */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        {/* 🪤 `min-w-0` : un item de grille vaut `min-width: auto`, donc il
+            s'élargit au contenu. Sans lui, le `min-w-[560px]` du damier pousse
+            la colonne à 594 px et c'est la PAGE ENTIÈRE qui défile de côté sur
+            mobile — pas le damier dans son cadre. Mesuré : 626 px de large pour
+            un écran de 390. */}
+        <div className="min-w-0 space-y-3 lg:col-span-2">
+          <div className="rounded-lg border bg-card p-4">
+            <h2 className="mb-3 font-semibold text-muted-foreground text-sm uppercase tracking-wide">Étape atteinte</h2>
+            <div className="space-y-2">
+              {perEtape.map(({ etape, count }) => {
+                const actif = fEtape === etape;
+                return (
+                  <button
+                    key={etape}
+                    type="button"
+                    aria-pressed={actif}
+                    onClick={() => setFEtape(actif ? "" : etape)}
+                    title={actif ? "Cliquer pour retirer le filtre" : `Filtrer sur « ${ETAPE_META[etape].label} »`}
+                    className={`grid w-full grid-cols-[110px_1fr_44px] items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 ${
+                      actif ? "bg-muted" : ""
+                    } ${fEtape && !actif ? "opacity-50" : ""}`}
+                  >
+                    <span
+                      className={`flex items-center gap-2 text-sm ${actif ? "font-medium text-foreground" : "text-muted-foreground"}`}
+                    >
+                      <span className={`h-2 w-2 rounded-sm ${ETAPE_META[etape].dot}`} aria-hidden />
+                      {ETAPE_META[etape].label}
+                    </span>
+                    <div className="relative h-4 rounded bg-muted">
+                      <div
+                        className={`absolute inset-y-0 left-0 min-w-0.5 rounded ${etape === "commande" ? "bg-emerald-500" : "bg-primary/70"}`}
+                        style={{ width: `${(100 * count) / maxEtape}%` }}
+                      />
+                    </div>
+                    <span className="text-right text-sm tabular-nums">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
+
+          <AffluenceHeatmap
+            matrice={perCreneau}
+            libelle={libelleCreneaux}
+            fenetreJours={days}
+            selection={fCreneau}
+            onSelect={(c) => setFCreneau(bascule(fCreneau, c))}
+          />
         </div>
 
         <div className="rounded-lg border bg-card p-4">
@@ -249,33 +404,69 @@ export default function PaniersClient() {
             Par canal — paniers et commandes
           </h2>
           <div className="space-y-3">
-            {perCanal.map(({ canal, total, conv }) => (
-              <div key={canal}>
-                <div className="mb-1 flex items-baseline justify-between text-sm">
-                  <span>{canal}</span>
-                  <span className="text-muted-foreground tabular-nums">
-                    {total} → {conv} ({total > 0 ? Math.round((100 * conv) / total) : 0} %)
-                  </span>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="relative h-2 rounded bg-muted">
-                    <div
-                      className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-primary/70"
-                      style={{ width: `${(100 * total) / maxCanal}%` }}
-                    />
+            {perCanal.map(({ canal, total, conv }) => {
+              const actif = fCanal === canal;
+              return (
+                <button
+                  key={canal}
+                  type="button"
+                  aria-pressed={actif}
+                  onClick={() => setFCanal(actif ? "" : canal)}
+                  title={actif ? "Cliquer pour retirer le filtre" : `Filtrer sur « ${canal} »`}
+                  className={`w-full rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 ${
+                    actif ? "bg-muted" : ""
+                  } ${fCanal && !actif ? "opacity-50" : ""}`}
+                >
+                  <div className="mb-1 flex items-baseline justify-between text-sm">
+                    <span className={actif ? "font-medium" : undefined}>{canal}</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {total} → {conv} ({total > 0 ? Math.round((100 * conv) / total) : 0} %)
+                    </span>
                   </div>
-                  <div className="relative h-2 rounded bg-muted">
-                    <div
-                      className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-emerald-500"
-                      style={{ width: `${(100 * conv) / maxCanal}%` }}
-                    />
+                  <div className="space-y-0.5">
+                    <div className="relative h-2 rounded bg-muted">
+                      <div
+                        className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-primary/70"
+                        style={{ width: `${(100 * total) / maxCanal}%` }}
+                      />
+                    </div>
+                    <div className="relative h-2 rounded bg-muted">
+                      <div
+                        className="absolute inset-y-0 left-0 min-w-0.5 rounded bg-emerald-500"
+                        style={{ width: `${(100 * conv) / maxCanal}%` }}
+                      />
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
+
+      {fJour && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-300 border-dashed bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+          <span className="text-muted-foreground">Activité du</span>
+          <span className="font-medium">
+            {new Date(`${fJour}T12:00:00`).toLocaleDateString("fr-FR", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            })}
+          </span>
+          <span className="text-muted-foreground">
+            — {filtered.length} panier{filtered.length > 1 ? "s" : ""} ouvert{filtered.length > 1 ? "s" : ""} ou
+            commandé{filtered.length > 1 ? "s" : ""} ce jour-là
+          </span>
+          <button
+            type="button"
+            onClick={() => setFJour(null)}
+            className="ml-auto rounded-md border px-2 py-0.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-800"
+          >
+            Tout réafficher
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <select
@@ -312,6 +503,16 @@ export default function PaniersClient() {
           <option value="ads">Ads</option>
           <option value="site">Site</option>
         </select>
+        {!creneauVide(fCreneau) && fCreneau && (
+          <button
+            type="button"
+            onClick={() => setFCreneau(null)}
+            title="Retirer le filtre de créneau"
+            className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm hover:bg-primary/20"
+          >
+            {libelleCreneau(fCreneau)} ✕
+          </button>
+        )}
         <input
           type="search"
           value={fQ}
@@ -336,6 +537,7 @@ export default function PaniersClient() {
               <th className="px-3 py-2.5">Produit</th>
               <th className="px-3 py-2.5">Email</th>
               <th className="px-3 py-2.5">Src</th>
+              <th className="px-3 py-2.5">Appareil</th>
               <th className="px-3 py-2.5 text-right">Qté</th>
               <th className="cursor-pointer select-none px-3 py-2.5 text-right" onClick={() => toggleSort("totalHt")}>
                 Total HT {sortKey === "totalHt" ? (sortDir === -1 ? "↓" : "↑") : ""}
@@ -362,6 +564,18 @@ export default function PaniersClient() {
                       className="inline-block rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-[11px] text-sky-700 dark:bg-sky-950/50 dark:text-sky-300"
                     >
                       Ads
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2">
+                  {/* ⚠️ `null` = panier ANTÉRIEUR à la capture (storefront#1189),
+                      pas un appareil inconnu. Le tiret le dit sans mentir. */}
+                  {r.device ? (
+                    <span title={[r.deviceOs, r.surface].filter(Boolean).join(" · ") || undefined}>
+                      {LIBELLE_APPAREIL[r.device] ?? r.device}
+                      {r.deviceOs && <span className="ml-1 text-muted-foreground text-xs">{r.deviceOs}</span>}
                     </span>
                   ) : (
                     <span className="text-muted-foreground">—</span>
