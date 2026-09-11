@@ -63,6 +63,18 @@ export interface CartRow {
    *  `pdp_buy_with`, `commande_rapide`, `recommande`, `deja_achete`.
    *  C'est la seule mesure de ce que produit le contenu éditorial. */
   surface: string | null;
+  /**
+   * Lignes de ce panier venues d'une SUGGESTION (« Souvent achetés ensemble »),
+   * et ce qu'elles pèsent en euros HT.
+   *
+   * 🪤 Ne pas confondre avec `surface` juste au-dessus : celle-là est posée sur
+   * le CART à sa création et ne décrit que le PREMIER ajout — le cross-sell vit
+   * par construction dans un panier déjà ouvert, `add_surface` ne le voit donc
+   * JAMAIS. Cette mesure-ci se lit sur la LIGNE
+   * (`cart_line_item.metadata.surface`, storefront#1219), une par une.
+   */
+  lignesXsell: number;
+  caXsell: number;
   canal: string;
   email: string | null;
   lignes: number;
@@ -76,6 +88,17 @@ export interface CartsLivePayload {
   days: number;
   rows: CartRow[];
   generatedAt: string;
+  /**
+   * Date de la toute PREMIÈRE ligne de panier portant une surface, toutes
+   * fenêtres confondues — `null` tant qu'il n'en existe aucune.
+   *
+   * 🪤 Sert à ne pas faire dire à un zéro ce qu'il ne dit pas. Sans ce champ,
+   * l'écran afficherait « 0 € via suggestions » avant même que storefront#1219
+   * soit en production, et ce zéro se lirait « le cross-sell ne rapporte rien »
+   * au lieu de « rien n'est encore mesuré ». Même piège que `device`/`surface`
+   * ci-dessus, dont le `null` signifie « panier antérieur à la capture ».
+   */
+  xsellDepuis: string | null;
 }
 
 /**
@@ -103,6 +126,12 @@ SELECT
   count(li.id)::int AS lignes,
   sum(li.quantity)::float AS qte,
   round(sum(li.unit_price * li.quantity), 2)::float AS total_ht,
+  -- Lignes venues d'une suggestion : la clé est posée par le storefront à la
+  -- création de la ligne, seulement quand l'ajout part d'un bloc cross-sell.
+  -- coalesce sur la somme : un FILTER sans ligne retenue rend NULL, pas 0.
+  count(li.id) FILTER (WHERE li.metadata->>'surface' IS NOT NULL)::int AS lignes_xsell,
+  round(coalesce(sum(li.unit_price * li.quantity)
+        FILTER (WHERE li.metadata->>'surface' IS NOT NULL), 0), 2)::float AS ca_xsell,
   (array_agg(li.product_title ORDER BY li.created_at))[1] AS produit,
   CASE
     WHEN c.completed_at IS NOT NULL THEN 'commande'
@@ -141,9 +170,22 @@ interface RawRow {
   lignes: number;
   qte: number;
   total_ht: number;
+  lignes_xsell: number;
+  ca_xsell: number;
   produit: string;
   etape: CartEtape;
 }
+
+/**
+ * Première ligne de panier jamais marquée d'une surface. Requête à part, sans
+ * fenêtre ni exclusion : on cherche l'existence de la mesure, pas son volume
+ * sur la période affichée.
+ */
+const SQL_XSELL_DEPUIS = `
+SELECT min(created_at) AS depuis
+FROM cart_line_item
+WHERE metadata->>'surface' IS NOT NULL AND deleted_at IS NULL
+`;
 
 export async function GET(request: Request) {
   if (!process.env.MEDUSA_DATABASE_URL) {
@@ -159,9 +201,13 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { rows } = await medusaDb().query<RawRow>(SQL, [days]);
+    const [{ rows }, depuis] = await Promise.all([
+      medusaDb().query<RawRow>(SQL, [days]),
+      medusaDb().query<{ depuis: Date | null }>(SQL_XSELL_DEPUIS),
+    ]);
     const data: CartsLivePayload = {
       days,
+      xsellDepuis: depuis.rows[0]?.depuis ? depuis.rows[0].depuis.toISOString() : null,
       rows: rows.map((r) => ({
         id: r.id,
         at: r.at.toISOString(),
@@ -178,6 +224,8 @@ export async function GET(request: Request) {
         lignes: r.lignes,
         qte: r.qte,
         totalHt: r.total_ht,
+        lignesXsell: r.lignes_xsell,
+        caXsell: r.ca_xsell,
         produit: r.produit ?? "—",
         etape: r.etape,
       })),
