@@ -97,9 +97,21 @@ const dateFmt = new Intl.DateTimeFormat("fr-FR", {
   minute: "2-digit",
 });
 
-function Tile({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
+function Tile({
+  value,
+  label,
+  accent,
+  hint,
+}: {
+  value: string;
+  label: string;
+  accent?: boolean;
+  /** Précision au survol — sert aux tuiles dont le chiffre seul peut se lire
+   *  de travers (ex. « — » parce que rien n'est encore mesuré). */
+  hint?: string;
+}) {
   return (
-    <div className="rounded-lg border bg-card p-4">
+    <div className="rounded-lg border bg-card p-4" title={hint}>
       <div className={`font-bold text-2xl tabular-nums ${accent ? "text-primary" : ""}`}>{value}</div>
       <div className="mt-0.5 text-muted-foreground text-xs">{label}</div>
     </div>
@@ -173,6 +185,9 @@ export default function PaniersClient() {
   }, [days, load]);
 
   const rows = useMemo(() => payload?.rows ?? [], [payload]);
+  /** `null` = mesure inexistante OU payload pas encore chargé — les deux se
+   *  rendent pareil (« — »), aucun des deux n'est un zéro. */
+  const xsellDepuis = payload?.xsellDepuis ?? null;
   const canaux = useMemo(() => [...new Set(rows.map((r) => r.canal))].sort(), [rows]);
 
   const stats = useMemo(() => {
@@ -186,6 +201,11 @@ export default function PaniersClient() {
       htConverti: commandes.reduce((s, r) => s + r.totalHt, 0),
       devis: rows.filter((r) => r.etape === "devis").length,
       relance: relance.length,
+      // Cross-sell : ce que les suggestions ajoutent VRAIMENT, en euros. GA4
+      // compte l'événement d'ajout ; ici on a le montant, et sans dépendre du
+      // consentement cookies.
+      htXsell: rows.reduce((s, r) => s + r.caXsell, 0),
+      paniersXsell: rows.filter((r) => r.lignesXsell > 0).length,
     };
   }, [rows]);
 
@@ -334,7 +354,7 @@ export default function PaniersClient() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <Tile value={String(stats.total)} label="paniers" />
         <Tile value={String(stats.commandes)} label="commandes" />
         <Tile value={`${stats.taux} %`} label="taux de conversion" accent />
@@ -342,6 +362,24 @@ export default function PaniersClient() {
         <Tile value={eur(stats.htConverti)} label="HT convertis" />
         <Tile value={String(stats.devis)} label="devis en cours" />
         <Tile value={String(stats.relance)} label="identifiés à relancer" />
+        {/* Cross-sell. Tant qu'aucune ligne n'a jamais porté de surface
+            (`xsellDepuis` null), on affiche « — » et non « 0 € » : un zéro
+            dirait que les suggestions ne rapportent rien, alors que la mesure
+            n'existe simplement pas encore. Une fois la mesure vivante, un vrai
+            0 € sur la fenêtre est une information, et il s'affiche. */}
+        {xsellDepuis ? (
+          <Tile
+            value={eur(stats.htXsell)}
+            label="HT via suggestions"
+            hint={`${stats.paniersXsell} panier(s) de la fenêtre contiennent au moins une ligne ajoutée depuis un bloc « Souvent achetés ensemble ». Mesuré depuis le ${dateFmt.format(new Date(xsellDepuis))}.`}
+          />
+        ) : (
+          <Tile
+            value="—"
+            label="HT via suggestions"
+            hint="Aucune ligne de panier ne porte encore de surface : storefront#1219 n'est pas en production. Ce n'est pas un zéro."
+          />
+        )}
       </div>
 
       <CommerceStatsPanel onJourClick={choisirJour} jourActif={fJour} />
@@ -555,6 +593,21 @@ export default function PaniersClient() {
                 <td className="max-w-80 px-3 py-2">
                   {r.produit}
                   {r.lignes > 1 && <span className="text-muted-foreground text-xs"> +{r.lignes - 1} art.</span>}
+                  {/* Combien de ces articles viennent d'une suggestion. Discret
+                      (même taille que « +N art. ») : c'est une précision de
+                      lecture sur la ligne, le total vit dans la tuile. */}
+                  {r.lignesXsell > 0 && (
+                    <span
+                      className="text-emerald-700 text-xs dark:text-emerald-400"
+                      // Deux décimales, comme la colonne Total HT juste à
+                      // droite : `eur()` arrondit à l'euro, ce qui convient à
+                      // un cumul de tuile mais fausserait une ligne à 8,90 €.
+                      title={`${r.lignesXsell} ligne(s) ajoutée(s) depuis « Souvent achetés ensemble », soit ${r.caXsell.toLocaleString("fr-FR", { minimumFractionDigits: 2 })} € HT`}
+                    >
+                      {" "}
+                      dont {r.lignesXsell} suggéré{r.lignesXsell > 1 ? "s" : ""}
+                    </span>
+                  )}
                 </td>
                 <td className="max-w-52 truncate px-3 py-2 text-muted-foreground">{r.email ?? "—"}</td>
                 <td className="px-3 py-2">
